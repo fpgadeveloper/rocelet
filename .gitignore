@@ -1,0 +1,21 @@
+# simulation / synthesis build products
+sim/build/
+synth/build/
+synth/*.log
+synth/*.jou
+.Xil/
+*.jou
+*.log
+*.pb
+*.wdb
+xsim.dir/
+__pycache__/
+*.pyc
+host/build/
+host/rocelet_host
+host/*.o
+host/build.cfg
+host/tests/test_gpu
+
+# documentation build (sphinx-build, Read the Docs)
+docs/_build/

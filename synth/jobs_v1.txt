@@ -1,0 +1,7 @@
+# rocelet v1 out-of-context results (name | top | generics | flow | period ns)
+# The parameter defaults of rocelet_top are the v1 configuration: 16 QPs, 16 windows, READ
+# depth 16, 256 KB URAM retransmit ring, 128 outstanding WRs, RX ICRC on, HSB, VLAN, PAUSE,
+# ARP/ICMP, other-traffic port, counters, 32 KB RX / TX FIFOs, AXI4 memory master.
+v1_lint   | rocelet_top  |  | lint
+v1_top    | rocelet_top  |  | route
+v1_core   | rocelet_core |  | synth

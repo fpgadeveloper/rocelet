@@ -1,0 +1,7 @@
+# Direct dependencies of the Sphinx docs build (installed by Read the Docs,
+# see .readthedocs.yaml). Transitive packages (certifi, urllib3, requests,
+# docutils, ...) are deliberately left unpinned so every build resolves
+# current, patched releases instead of a stale freeze.
+sphinx>=7.1
+sphinx-rtd-theme>=3.0
+myst-parser>=2.0

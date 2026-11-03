@@ -1,0 +1,8 @@
+# rocelet build-option costs (out of context, synthesis only)
+var_reread    | rocelet_top | RTX_MODE="REREAD"  | synth
+var_lossy     | rocelet_top | RTX_MODE="LOSSY"   | synth
+var_nohsb     | rocelet_top | HSB_EN=0           | synth
+var_nocnt     | rocelet_top | COUNTERS_EN=0      | synth
+var_noicrc    | rocelet_top | RX_ICRC_EN=0       | synth
+var_lean      | rocelet_top | COUNTERS_EN=0 OTHER_EN=0 VLAN_EN=0 | synth
+var_250mhz    | rocelet_top |  | synth | 4.000

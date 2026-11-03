@@ -1,0 +1,35 @@
+# rocelet source list (paths relative to the repository root), in compile order.
+# Top: rocelet_top (or rocelet_core for the engine alone).
+rtl/rocelet_pkg.sv
+rtl/ctl/rocelet_regs_pkg.sv
+rtl/common/rocelet_crc32_xor.sv
+rtl/common/rocelet_crc32_inv.sv
+rtl/common/rocelet_keep2n.sv
+rtl/common/rocelet_fifo.sv
+rtl/common/rocelet_crc32_core.sv
+rtl/common/rocelet_byte_shift.sv
+rtl/common/rocelet_ram_sdp.sv
+rtl/icrc/rocelet_icrc_mask.sv
+rtl/icrc/rocelet_icrc_tx.sv
+rtl/icrc/rocelet_icrc_rx.sv
+rtl/tx/rocelet_tx_builder.sv
+rtl/tx/rocelet_tx_arb.sv
+rtl/tx/rocelet_req_ctrl.sv
+rtl/rx/rocelet_rx_parser.sv
+rtl/rx/rocelet_resp_rx.sv
+rtl/rx/rocelet_resp_tx.sv
+rtl/rc/rocelet_ack_proc.sv
+rtl/rc/rocelet_retx_desc.sv
+rtl/rc/rocelet_retx_ring.sv
+rtl/rocelet_core.sv
+rtl/mac/rocelet_rx_fifo.sv
+rtl/mac/rocelet_pkt_fifo.sv
+rtl/mac/rocelet_vlan.sv
+rtl/mac/rocelet_rx_cls.sv
+rtl/mac/rocelet_arp_icmp.sv
+rtl/mac/rocelet_mac_arb.sv
+rtl/mac/rocelet_pause.sv
+rtl/mac/rocelet_mac.sv
+rtl/mem/rocelet_axi_mem.sv
+rtl/ctl/rocelet_regs.sv
+rtl/rocelet_top.sv
