@@ -125,8 +125,8 @@ and 2026-10-31, rocelet v0.1 to v0.2.2, and the Holoscan Sensor Bridge sessions 
   injected drops exactly; a lost READ MIDDLE is re-issued in under 5 µs (section 5).
 - **Wrong R_Key (confirmed).** NAK remote access error (AETH 0x62): about 1.2-1.4 ms after a
   plain WRITE, 1.83 ms after a 4 KB WRITE with immediate; with a budget of 8 x 1 ms or more
-  (default 8 x 5 ms) the FPGA QP reports requester error 0x62 (with v0.1's 8 x 200 µs it timed
-  out first, 0xFF). The host's QP goes to error.
+  (default 8 x 5 ms) the FPGA QP reports requester error 0x62 (with the 200 µs ACK timeout the
+  design firmware set at the time, 8 x 200 µs, it timed out first, 0xFF). The host's QP goes to error.
 - **READ re-issue and continuation (confirmed)**: section 5.
 - **RNR (confirmed)**: `min_rnr_timer` honoured, multi-packet WRITE with immediate recovers
   (section 4).
@@ -235,7 +235,7 @@ ring). A host with NIC and GPU behind one switch, or a Gen4/5 GPU slot, lifts th
 | `nvidia-smi dmon -s t -i 0` | `rxpci` / `txpci` MB/s of the GPU link | `rxpci` ~1.38x the payload rate (~14 GB/s at 81 Gb/s) |
 | `ethtool -S enp179s0f0np0 \| grep outbound_pci_stalled_wr` (every few seconds) | `outbound_pci_stalled_wr`: % of the last second the NIC had posted writes it could not send (no PCIe credits) | 72 % into the GPU; 0 into host memory |
 | `ethtool -S ... \| grep -E 'rx_discards_phy\|rx_out_of_buffer\|pause_ctrl'` | whether the NIC dropped or paused instead | 0 (it delays ACKs instead) |
-| rocelet requester counters (ACK-window stalls), `nvidia-smi -q -d MEMORY` (BAR1) | the FPGA side of the back pressure; BAR1 in use | BAR1 ~244 / 256 MiB with a 240 MiB ring |
+| rocelet's `WR_OUTSTANDING` register (a status, not a counter), in the qsfp28-fmc-rocelet design also the producer's "IQ waits" in the console's `hsb st` line; `nvidia-smi -q -d MEMORY` (BAR1) | the FPGA side of the back pressure: `WR_OUTSTANDING` sits at its maximum (the requester's window is full while the NIC delays its ACKs) and "IQ waits" counts the cycles the producer waited for the engine; BAR1 in use | BAR1 ~244 / 256 MiB with a 240 MiB ring |
 
 ## 10. Link flaps and cable pulls
 

@@ -24,7 +24,7 @@ loses and what each host NIC requires); this page is its summary.
 | QP state | RESET (commit) / RTS / ERROR per QP; error causes captured; per-QP reset by a configuration commit (no bitstream reload); a forced error flushes a QP's work requests |
 | Memory windows | `NUM_MR` windows {VA, length, local address, R_Key, read/write}, selected by the low R_Key bits with a full 32-bit key compare |
 | QPs | `NUM_QP` (16 default, 1-256), local QPN = `QPN_BASE` + index |
-| Path MTU | 256-4096 per QP; line rate at PMTU >= 1024 (the responder reaches 67 % / 89 % of 100 Gb/s at 256 / 512) |
+| Path MTU | 256-4096 per QP; WRITE and SEND at line rate at PMTU >= 1024 (the responder reaches 67 % / 89 % of 100 Gb/s at 256 / 512); host READs of FPGA memory measured 81 Gb/s at PMTU 1024 and 95.1 Gb/s at 2048 ([host-setup.md](host-setup.md) section 5) |
 
 ### Wire format and network
 

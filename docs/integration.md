@@ -127,9 +127,11 @@ keep the AXI-Lite and memory clock crossings outside it.
 In the complete KCU116 design (qsfp28-fmc-rocelet: CMAC, MicroBlaze, traffic generator and
 checker, 17 % of the KU5P) v0.1.0-dev closes at +0.016 ns. **The known tight path** is in the
 responder transmit engine: `u_core/u_rtx/r_act_reg` to the read enable of its response queue
-RAM (`u_core/u_rtx/u_q/g_sync.mem_reg*/ENARDEN`, 9 logic levels). It was also the worst path out
-of context in v0.1 (+0.144 ns; since v0.2 that is the counter clear, +0.107 ns, see
-[resources.md](resources.md)). The next ones are in the RX ICRC CRC network (+0.05 ns in the KCU116
+RAM (`u_core/u_rtx/u_q/g_sync.mem_reg*/ENARDEN`; out of context in v0.1, 2026-10-21: +0.144 ns,
+10 logic levels). The v0.2.2 out-of-context run (2026-11-03, [resources.md](resources.md)) has
+the same engine as its worst: `u_core/u_rtx/r_rem_reg[0]` to `u_core/u_rtx/c_v_reg`, +0.087 ns,
+9 logic levels, with the response queue RAM enable right behind it (+0.088 ns, 7 logic levels).
+The next ones are in the RX ICRC CRC network (+0.05 ns in the KCU116
 design). If a design misses on these paths by a little, a post-route `phys_opt_design` pass (or
 the `Performance_ExplorePostRoutePhysOpt` strategy) is the first thing to try; the run-to-run
 spread of the slack is about 0.1 ns.

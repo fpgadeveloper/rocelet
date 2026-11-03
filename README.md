@@ -26,9 +26,9 @@ On a Kintex UltraScale+ (KCU116) the full engine uses about one third of the log
 ERNIC IP and a few percent of its block RAM, and sustains line rate for messages of 2 KB and
 larger. It has been validated against an independent hardware RoCE v2 NIC.
 
-In numbers, the v0.2 IP (16 QPs, 16 memory windows, 16 outstanding READs per QP, 256 KB
+In numbers, the v0.2.2 IP (16 QPs, 16 memory windows, 16 outstanding READs per QP, 256 KB
 retransmit ring, RX ICRC check, MAC glue, register file and AXI4 memory master) uses about
-**20.7k LUT, 37 BRAM36 and 8 URAM** on an xcku5p and closes timing at 322 MHz
+**20.8k LUT, 37 BRAM36 and 8 URAM** on an xcku5p and closes timing at 322 MHz
 ([docs/resources.md](docs/resources.md)).
 
 ## Architecture

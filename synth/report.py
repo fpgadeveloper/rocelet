@@ -49,6 +49,13 @@ def hier(path):
     return rows
 
 
+def version():
+    """rocelet version 'vX.Y.Z' from the generated register package."""
+    txt = open(os.path.join(ROOT, 'rtl', 'ctl', 'rocelet_regs_pkg.sv')).read()
+    v = [re.search(r'VER_%s\s*=\s*8\'d(\d+)' % k, txt).group(1) for k in ('MAJOR', 'MINOR', 'PATCH')]
+    return 'v' + '.'.join(v)
+
+
 def bram(r36, r18):
     return r36 + r18 / 2.0
 
@@ -103,14 +110,6 @@ def main():
         if m:
             L += ['', 'Worst routed setup path: %s ns, `%s` -> `%s`, %s logic levels.' % m.groups()]
     L.append('')
-    # the v0.2.0-dev re-run of the routed top (its results are not in this build directory)
-    L += ['**v0.2.0-dev** (2026-10-30, same flow and settings, `rocelet_top` only; the tables below are',
-          'still the v0.1 run): placed and routed **20,745 LUT** (+157), **25,040 FF** (+72), 37 BRAM36,',
-          '8 URAM, WNS / WHS **0.107 / 0.017 ns**. The additions: the link-loss hold and `LINK_GRACE`',
-          '(ack_proc +18 LUT), the duplicate-READ flag (resp_tx +3 LUT), `LINK_GRACE`, status and the',
-          '`LINK_DOWN` counter (register file +124 LUT). The worst path is now the counter clear',
-          '(`u_regs/clr_cnt_reg` -> counter resets, high fanout, 2 logic levels) at 0.107 ns; the',
-          '`u_rtx` response-queue path is unchanged in logic.', '']
     hp = os.path.join(bdir, 'v1_top_route_hier.rpt')
     if os.path.exists(hp):
         rows = hier(hp)
@@ -147,12 +146,12 @@ def main():
                                                          r['uram'], r['wns_synth'], '{:+,}'.format(int(r['lut']) - base)))
     L += ['', '## Against the research prototype and AMD\'s ERNIC IP', '',
           '| Design | LUT | BRAM36 | URAM | Scope |', '|---|---:|---:|---:|---|',
-          '| **rocelet v0.1 `rocelet_top`** (routed, OOC) | **%s** | **%s** | **%s** | engine + MAC glue + ARP/ICMP + register file + counters + AXI4 memory master |'
-          % (n(top['lut_impl']), top['bram_impl'], top['uram_impl'])]
+          '| **rocelet %s `rocelet_top`** (routed, OOC) | **%s** | **%s** | **%s** | engine + MAC glue + ARP/ICMP + register file + counters + AXI4 memory master |'
+          % (version(), n(top['lut_impl']), top['bram_impl'], top['uram_impl'])]
     core = res.get('v1_core')
     if core:
-        L.append('| rocelet v0.1 `rocelet_core` (synthesis, OOC) | %s | %s | %s | engine only |' % (
-            n(core['lut']), core['bram36'], core['uram']))
+        L.append('| rocelet %s `rocelet_core` (synthesis, OOC) | %s | %s | %s | engine only |' % (
+            version(), n(core['lut']), core['bram36'], core['uram']))
     L += ['| prototype T2, 256 KB ring, 16 QP (synthesis, OOC) | 15,298 | 6 | 8 | engine only, split CRC network, no HSB / continuation / RNR decode / flush / pacer |',
           '| prototype T2 "RoCE function" in the KCU116 system (routed) | 16,738 | 23 | 8 | engine + MAC glue + ARP/ICMP; 17,335 with the VID-0 and PAUSE logic of the host-interop build; no register file, no AXI master |',
           '| AMD ERNIC v4.3, 8 QP (synthesis, OOC) | 42,082 | 117 | 20 | engine only |',

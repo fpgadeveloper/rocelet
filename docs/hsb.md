@@ -6,11 +6,14 @@ in RTL (the HSB builder mode, QP type 2). The **control plane** (enumeration, re
 the device's register map) and the frame producer belong to the design around the engine; the
 qsfp28-fmc-rocelet reference design implements them (see "Done in the design" below).
 
-The formats below were read from NVIDIA's repository (holoscan-sensor-bridge v2.7.0, Apache-2.0):
+The formats below were read from NVIDIA's repository (holoscan-sensor-bridge 3.0.0, Apache-2.0):
 `fpga/nv_hsb_ip/dp_pkt/dp_pkt_top.sv` (packet headers, immediate, metadata),
-`src/hololink/core/hololink.cpp` (`deserialize_metadata`) and
+`src/hololink/core/frame_metadata_parser.hpp` (`parse_frame_metadata`, which
+`Hololink::deserialize_metadata` in `src/hololink/core/hololink.cpp` calls) and
 `src/hololink/operators/roce_receiver/roce_receiver.cpp` (`page_from_imm`, `psn_from_imm`,
-`same_psn`). No NVIDIA code is used in rocelet.
+`same_psn`). They were first read from v2.7.0; 3.0.0 has the same packet, immediate and
+metadata formats (the metadata parser moved from `hololink.cpp` into its own header). No NVIDIA
+code is used in rocelet.
 
 ## What the host expects (the data plane)
 
