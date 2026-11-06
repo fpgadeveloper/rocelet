@@ -23,7 +23,10 @@
 # With --top the same traffic runs between two complete IPs (tb_top_pair: rocelet_top with
 # the MAC glue, AXI-Lite configuration, AXI4 memory, 802.3x PAUSE between the sides, VID-0
 # tags from A, plus ARP / ICMP towards A and a frame through the other-traffic ports).
-# Usage: test_pair.py [--top] [nwr] [seed] [drop per mille] [config...]
+# --mac-width 64 / 128 / 256 (with --top): both IPs at that MAC width, the link one MAC beat
+# per clock with random tvalid gaps inside received frames, PAUSE as the receiving MAC's
+# hold level (CTRL.PAUSE_RX_LEVEL, as omac) instead of quanta pulses.
+# Usage: test_pair.py [--top] [--mac-width N] [nwr] [seed] [drop per mille] [config...]
 #
 # Copyright (c) 2026 Opsero Electronic Design Inc.
 
@@ -71,10 +74,12 @@ def mm_pat(a, top):
     return (a & 0xFF) ^ ((a >> 16) & 0xFF) ^ 0x3C      # tb_core_pair
 
 
-def run(name, nwr, seed, drop, top=False):
+def run(name, nwr, seed, drop, top=False, mac_w=512):
     g, opt = CONFIGS[name]
+    if mac_w != 512:
+        g = dict(g, MAC_WIDTH=mac_w, PAUSE_LEVEL=1)
     rng = random.Random(seed)
-    d = os.path.join(S.BUILD, ('top_pair_' if top else 'pair_') + name)
+    d = os.path.join(S.BUILD, ('top_pair_' if top else 'pair_') + ('w%d_' % mac_w if mac_w != 512 else '') + name)
     os.makedirs(d, exist_ok=True)
     nq = g['NUM_QP']
     lossy = g['RTX_MODE'] == 'LOSSY'
@@ -121,7 +126,8 @@ def run(name, nwr, seed, drop, top=False):
     ferr_at = nwr // 3
     plus = ['dir=' + d, 'seed=%d' % seed, 'drop=%d' % drop, 'nwr=%d' % nwr, 'rnr=%d' % opt.get('rnr', 0),
             'ferr_qp=%d' % ferr_qp, 'ferr_at=%d' % ferr_at, 'pace=%d' % opt.get('pace', 0),
-            'rnr_code=%d' % opt.get('rnr_code', 1), 'rnr_max=%d' % opt.get('rnr_max', 2000)]
+            'rnr_code=%d' % opt.get('rnr_code', 1), 'rnr_max=%d' % opt.get('rnr_max', 2000),
+            'igap=%d' % (100 if mac_w != 512 else 0)]
     if opt.get('nodrop'):
         plus[2] = 'drop=0'
     ld = opt.get('ld')
@@ -274,7 +280,7 @@ def run(name, nwr, seed, drop, top=False):
         if 'TB_ERROR' in out:
             print('  %s' % [l for l in out.splitlines() if 'TB_ERROR' in l][:4])
             bad += 1
-        bad += check_top(d, log, out)
+        bad += check_top(d, log, out, mac_w)
     if opt.get('rnr_us'):
         # the requester waits the decoded (clamped) RNR time: tick = 16 clocks per us in the
         # testbench; allow the timer granularity and the scanner's latency
@@ -309,7 +315,7 @@ MAC_A, IP_A = 0x02000000000A, 0xC0A8020A
 CNT = None
 
 
-def check_top(d, log, out):
+def check_top(d, log, out, mac_w=512):
     """The extra system checks of tb_top_pair."""
     import roce_ref as R
     global CNT
@@ -375,6 +381,9 @@ def check_top(d, log, out):
     m = re.search(r'axi_err=(\d+)', out)
     if not m or int(m.group(1)):
         bad += 1
+    if mac_w != 512 and cnt['PAUSE_GATE'][0] + cnt['PAUSE_GATE'][1] == 0:
+        print('  PAUSE (MAC hold level) never in force at a %d-bit MAC' % mac_w)
+        bad += 1
     print('  system: ARP + ICMP replies, other-traffic frame, VLAN %d/%d, PAUSE loads %d/%d, counters %s' % (
         cnt['TX_VLAN_TAG'][0], cnt['RX_VLAN_STRIP'][1], cnt['PAUSE_GATE'][0], cnt['PAUSE_GATE'][1],
         'ok' if bad == 0 else 'BAD'))
@@ -385,13 +394,22 @@ def main():
     args = sys.argv[1:]
     top = '--top' in args
     args = [a for a in args if a != '--top']
+    mac_w = 512
+    if '--mac-width' in args:
+        i = args.index('--mac-width')
+        mac_w = int(args[i + 1])
+        del args[i:i + 2]
+        if not top:
+            print('--mac-width needs --top')
+            return 1
     nwr = int(args[0]) if len(args) > 0 else 40
     seed = int(args[1]) if len(args) > 1 else 1
     drop = int(args[2]) if len(args) > 2 else 20
     names = args[3:] or [n for n in CONFIGS if not (top and CONFIGS[n][1].get('core_only')) and
                          not CONFIGS[n][1].get('separate')]
-    fails = sum(run(n, nwr, seed, drop, top) for n in names)
-    print('%sPAIR TEST %s (%d failures)' % ('TOP ' if top else '', 'PASS' if fails == 0 else 'FAIL', fails))
+    fails = sum(run(n, nwr, seed, drop, top, mac_w) for n in names)
+    print('%sPAIR TEST%s %s (%d failures)' % ('TOP ' if top else '', ' (%d-bit MAC)' % mac_w if mac_w != 512 else '',
+                                             'PASS' if fails == 0 else 'FAIL', fails))
     return 1 if fails else 0
 
 

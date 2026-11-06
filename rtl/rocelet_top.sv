@@ -2,14 +2,17 @@
 //
 // rocelet_top - the rocelet RoCE v2 IP: engine (rocelet_core), MAC glue (rocelet_mac),
 // AXI4-Lite register file (rocelet_regs) and AXI4 memory master (rocelet_axi_mem), in one
-// clock domain (the 100G CMAC user clock). Port list and parameters: docs/interface.md;
+// clock domain (the MAC user clock: e.g. 322.27 MHz for a 512-bit 100G CMAC, 156.25 MHz for
+// a 256-bit 40G or 64-bit 10G MAC). The engine is 512 bits wide; a MAC narrower than that
+// (MAC_WIDTH 64 / 128 / 256) connects directly, through the width converters of
+// rocelet_mac_width.sv (none at 512). Port list and parameters: docs/interface.md;
 // register map: docs/registers.md; architecture: docs/architecture.md.
 //
-//   CMAC <-> rocelet_mac <-> rocelet_core <-> rocelet_axi_mem <-> m_axi (FPGA memory)
-//                 |               |   ^
-//          other traffic     WR / WC  |  SEND / receive completions
-//                                     |
-//   s_axil -> rocelet_regs -----------+  (configuration, status, counters)
+//   MAC <-> [width conv.] <-> rocelet_mac <-> rocelet_core <-> rocelet_axi_mem <-> m_axi
+//                                  |               |   ^
+//                           other traffic     WR / WC  |  SEND / receive completions
+//                                                      |
+//   s_axil -> rocelet_regs ----------------------------+  (configuration, status, counters)
 //
 // Copyright (c) 2026 Opsero Electronic Design Inc.
 
@@ -47,36 +50,39 @@ module rocelet_top
     parameter int          M_AXI_ID_W          = 2,
     parameter int          MEM_RD_BUF          = 256,
     parameter int          CLK_MHZ             = 322,
+    parameter int          CLK_KHZ             = 0,
+    parameter int          LINK_GBPS           = 100,
+    parameter int          MAC_WIDTH           = 512,
     parameter bit          READ_CONT_DEFAULT   = 1'b1
 ) (
     input  wire logic                    clk,
     input  wire logic                    rst,
     output wire logic                    irq,
 
-    // CMAC side
+    // MAC side
     input  wire logic                    mac_rx_reset,
     input  wire logic                    mac_tx_reset,
-    input  wire logic                    mac_rx_aligned,
+    input  wire logic                    mac_rx_status,
     input  wire logic                    link_up,
-    input  wire logic [511:0]            s_axis_rx_tdata,
-    input  wire logic [63:0]             s_axis_rx_tkeep,
+    input  wire logic [MAC_WIDTH-1:0]    s_axis_rx_tdata,
+    input  wire logic [MAC_WIDTH/8-1:0]  s_axis_rx_tkeep,
     input  wire logic                    s_axis_rx_tvalid,
     input  wire logic                    s_axis_rx_tlast,
     input  wire logic                    s_axis_rx_tuser,
-    output wire logic [511:0]            m_axis_tx_tdata,
-    output wire logic [63:0]             m_axis_tx_tkeep,
+    output wire logic [MAC_WIDTH-1:0]    m_axis_tx_tdata,
+    output wire logic [MAC_WIDTH/8-1:0]  m_axis_tx_tkeep,
     output wire logic                    m_axis_tx_tvalid,
     input  wire logic                    m_axis_tx_tready,
     output wire logic                    m_axis_tx_tlast,
     output wire logic                    m_axis_tx_tuser,
-    input  wire logic [8:0]              stat_rx_pause_req,
-    input  wire logic [8:0]              stat_rx_pause_valid,
-    input  wire logic [15:0]             stat_rx_pause_quanta8,
-    input  wire logic                    stat_rx_pause,
-    input  wire logic                    stat_tx_pause,
-    output wire logic [8:0]              ctl_tx_pause_req,
-    input  wire logic                    stat_rx_rsfec_corrected_cw_inc,
-    input  wire logic                    stat_rx_rsfec_uncorrected_cw_inc,
+    input  wire logic                    mac_pause_hold,
+    input  wire logic                    mac_pause_valid,
+    input  wire logic [15:0]             mac_pause_quanta,
+    output wire logic                    mac_pause_req,
+    input  wire logic                    mac_pause_rx_frame,
+    input  wire logic                    mac_pause_tx_frame,
+    input  wire logic                    mac_fec_corr_inc,
+    input  wire logic                    mac_fec_uncorr_inc,
 
     // other traffic
     output wire logic [511:0]            m_axis_other_tdata,
@@ -179,6 +185,10 @@ localparam int MRW = (NUM_MR > 1) ? $clog2(NUM_MR) : 1;
 localparam int RTX_ID = (RTX_MODE == "RING") ? 0 : (RTX_MODE == "REREAD") ? 1 : 2;
 localparam int FW = $clog2(RX_FIFO_DEPTH) + 1;
 
+if (MAC_WIDTH != 64 && MAC_WIDTH != 128 && MAC_WIDTH != 256 && MAC_WIDTH != 512) begin : g_bad_mac_width
+    $error("rocelet_top: MAC_WIDTH must be 64, 128, 256 or 512");
+end
+
 // ---------------- registers ----------------
 logic           ctl_reset, ctl_rx_en, ctl_tx_en, ctl_read_cont, ctl_loss_fatal, ctl_vlan_rx_strip,
                 ctl_vlan_tx_tag, ctl_arp_int, ctl_other_rx_en, ctl_pause_rx_en, ctl_pause_rx_level,
@@ -195,6 +205,7 @@ logic [2:0]     retry_cnt, rnr_retry;
 logic [19:0]    pace_inc;
 logic [15:0]    pace_burst;
 logic [23:0]    link_grace;
+logic [19:0]    pause_qclk;
 logic           qp_we, qp_valid, qp_ipv6, err_we, mr_we, mr_valid;
 logic [QPW-1:0] qp_idx, err_qp;
 logic [1:0]     qp_type, mr_acc;
@@ -220,8 +231,8 @@ logic [NCNT-1:0]      ev_cnt;
 core_ev_t             cev;
 mac_ev_t              mev;
 
-// link state for the requester's ACK-timeout hold (CMAC stat_rx_aligned or stat_rx_status;
-// synchronised here, as the CMAC status may come from the RX clock domain)
+// link state for the requester's ACK-timeout hold (the MAC's link status, e.g. aligned / block
+// lock and no local / remote fault; synchronised here, as it may come from another clock domain)
 (* ASYNC_REG = "TRUE" *) logic link_s0 = 1'b0, link_s1 = 1'b0;
 always_ff @(posedge clk) begin
     link_s0 <= link_up;
@@ -238,7 +249,8 @@ rocelet_regs #(
     .RING_BYTES(RING_BYTES), .MAX_WR(MAX_WR), .PMTU_LOG2(PMTU_LOG2), .PMTU_RUNTIME(PMTU_RUNTIME),
     .RX_ICRC_EN(RX_ICRC_EN), .IPV6_EN(IPV6_EN), .HSB_EN(HSB_EN), .VLAN_EN(VLAN_EN), .PAUSE_EN(PAUSE_EN),
     .ARP_EN(ARP_EN), .OTHER_EN(OTHER_EN), .COUNTERS_EN(COUNTERS_EN), .RX_FIFO_DEPTH(RX_FIFO_DEPTH),
-    .TX_FIFO_DEPTH(TX_FIFO_DEPTH), .CLK_MHZ(CLK_MHZ), .READ_CONT_DEFAULT(READ_CONT_DEFAULT)
+    .TX_FIFO_DEPTH(TX_FIFO_DEPTH), .CLK_MHZ(CLK_MHZ), .CLK_KHZ(CLK_KHZ), .LINK_GBPS(LINK_GBPS),
+    .MAC_WIDTH(MAC_WIDTH), .READ_CONT_DEFAULT(READ_CONT_DEFAULT)
 ) u_regs (
     .clk(clk), .rst(rst),
     .s_axil_awaddr(s_axil_awaddr), .s_axil_awvalid(s_axil_awvalid), .s_axil_awready(s_axil_awready),
@@ -255,13 +267,13 @@ rocelet_regs #(
     .tick_div(tick_div), .ack_timeout(ack_timeout), .rnr_min(rnr_min), .rnr_max(rnr_max),
     .rnr_nak_timer(rnr_nak_timer), .ackreq_n(ackreq_n), .vlan_tci(vlan_tci), .pause_xoff(pause_xoff),
     .pause_xon(pause_xon), .retry_cnt(retry_cnt), .rnr_retry(rnr_retry), .pace_inc(pace_inc),
-    .pace_burst(pace_burst), .link_grace(link_grace),
+    .pace_burst(pace_burst), .link_grace(link_grace), .pause_qclk(pause_qclk),
     .qp_we(qp_we), .qp_idx(qp_idx), .qp_valid(qp_valid), .qp_type(qp_type), .qp_sq_psn(qp_sq_psn),
     .qp_rq_psn(qp_rq_psn), .qp_pmtu(qp_pmtu), .qp_ipv6(qp_ipv6), .qp_dmac(qp_dmac), .qp_dip(qp_dip),
     .qp_dqpn(qp_dqpn), .qp_sport(qp_sport), .qp_dport(qp_dport), .err_we(err_we), .err_qp(err_qp),
     .mr_we(mr_we), .mr_idx(mr_idx), .mr_valid(mr_valid), .mr_acc(mr_acc), .mr_rkey(mr_rkey), .mr_va(mr_va),
     .mr_len(mr_len), .mr_laddr(mr_laddr),
-    .st_in_reset(eng_rst), .st_mac_aligned(mac_rx_aligned), .st_link_up(link_s1), .st_timer_hold(timer_hold),
+    .st_in_reset(eng_rst), .st_mac_rx_status(mac_rx_status), .st_link_up(link_s1), .st_timer_hold(timer_hold),
     .st_pause_gate(pause_gate), .st_pause_req(pause_req),
     .st_pause_quanta(pause_quanta), .st_rx_fill(16'(rx_fill)), .st_wr_outstanding(wr_outstanding),
     .st_ring_used(ring_used), .st_vlan_last_tci(vlan_last_tci),
@@ -271,6 +283,38 @@ rocelet_regs #(
     .ev(ev_cnt), .rx_bytes_add(mev.rx_bytes), .tx_bytes_add(mev.tx_bytes), .irq(irq)
 );
 
+// ---------------- MAC width conversion (none at 512 bits) ----------------
+wire logic [511:0] mrx_tdata, mtx_tdata;
+wire logic [63:0]  mrx_tkeep, mtx_tkeep;
+wire logic         mrx_tvalid, mrx_tlast, mrx_tuser, mtx_tvalid, mtx_tready, mtx_tlast;
+logic              mtx_gap;
+if (MAC_WIDTH == 512) begin : g_w512
+    assign mrx_tdata  = s_axis_rx_tdata;
+    assign mrx_tkeep  = s_axis_rx_tkeep;
+    assign mrx_tvalid = s_axis_rx_tvalid;
+    assign mrx_tlast  = s_axis_rx_tlast;
+    assign mrx_tuser  = s_axis_rx_tuser;
+    assign m_axis_tx_tdata  = mtx_tdata;
+    assign m_axis_tx_tkeep  = mtx_tkeep;
+    assign m_axis_tx_tvalid = mtx_tvalid;
+    assign m_axis_tx_tlast  = mtx_tlast;
+    assign mtx_tready       = m_axis_tx_tready;
+    assign mtx_gap          = 1'b0;
+end else begin : g_wconv
+    rocelet_rx_upsize #(.MAC_W(MAC_WIDTH)) u_rx_up (
+        .clk(clk), .rst(eng_rst), .abort(mac_rx_reset),
+        .s_tdata(s_axis_rx_tdata), .s_tkeep(s_axis_rx_tkeep), .s_tvalid(s_axis_rx_tvalid),
+        .s_tlast(s_axis_rx_tlast), .s_tuser(s_axis_rx_tuser),
+        .m_tdata(mrx_tdata), .m_tkeep(mrx_tkeep), .m_tvalid(mrx_tvalid), .m_tlast(mrx_tlast), .m_tuser(mrx_tuser)
+    );
+    rocelet_tx_downsize #(.MAC_W(MAC_WIDTH)) u_tx_dn (
+        .clk(clk), .rst(eng_rst),
+        .s_tdata(mtx_tdata), .s_tkeep(mtx_tkeep), .s_tvalid(mtx_tvalid), .s_tready(mtx_tready), .s_tlast(mtx_tlast),
+        .m_tdata(m_axis_tx_tdata), .m_tkeep(m_axis_tx_tkeep), .m_tvalid(m_axis_tx_tvalid),
+        .m_tready(m_axis_tx_tready), .m_tlast(m_axis_tx_tlast), .ev_gap(mtx_gap)
+    );
+end
+
 // ---------------- MAC glue ----------------
 wire logic [511:0] erx_tdata, etx_tdata;
 wire logic [63:0]  erx_tkeep, etx_tkeep;
@@ -278,22 +322,21 @@ wire logic         erx_tvalid, erx_tready, erx_tlast, etx_tvalid, etx_tready, et
 
 rocelet_mac #(
     .IPV6_EN(IPV6_EN), .VLAN_EN(VLAN_EN), .PAUSE_EN(PAUSE_EN), .ARP_EN(ARP_EN), .OTHER_EN(OTHER_EN),
-    .RX_FIFO_DEPTH(RX_FIFO_DEPTH), .TX_FIFO_DEPTH(TX_FIFO_DEPTH), .OTHER_TX_FIFO_DEPTH(OTHER_TX_FIFO_DEPTH),
-    .CLK_MHZ(CLK_MHZ)
+    .RX_FIFO_DEPTH(RX_FIFO_DEPTH), .TX_FIFO_DEPTH(TX_FIFO_DEPTH), .OTHER_TX_FIFO_DEPTH(OTHER_TX_FIFO_DEPTH)
 ) u_mac (
     .clk(clk), .rst(eng_rst),
     .my_mac(my_mac), .my_ip4(my_ip4), .rx_en(ctl_rx_en), .tx_en(ctl_tx_en),
     .vlan_rx_strip(ctl_vlan_rx_strip), .vlan_tx_tag(ctl_vlan_tx_tag), .vlan_tci(vlan_tci),
     .arp_int(ctl_arp_int), .other_rx_en(ctl_other_rx_en), .pause_rx_en(ctl_pause_rx_en),
     .pause_rx_level(ctl_pause_rx_level), .pause_tx_en(ctl_pause_tx_en), .pause_xoff(pause_xoff),
-    .pause_xon(pause_xon),
+    .pause_xon(pause_xon), .pause_qclk(pause_qclk),
     .mac_rx_reset(mac_rx_reset), .mac_tx_reset(mac_tx_reset),
-    .s_axis_rx_tdata(s_axis_rx_tdata), .s_axis_rx_tkeep(s_axis_rx_tkeep), .s_axis_rx_tvalid(s_axis_rx_tvalid),
-    .s_axis_rx_tlast(s_axis_rx_tlast), .s_axis_rx_tuser(s_axis_rx_tuser),
-    .m_axis_tx_tdata(m_axis_tx_tdata), .m_axis_tx_tkeep(m_axis_tx_tkeep), .m_axis_tx_tvalid(m_axis_tx_tvalid),
-    .m_axis_tx_tready(m_axis_tx_tready), .m_axis_tx_tlast(m_axis_tx_tlast),
-    .stat_rx_pause_req(stat_rx_pause_req), .stat_rx_pause_valid(stat_rx_pause_valid),
-    .stat_rx_pause_quanta8(stat_rx_pause_quanta8), .ctl_tx_pause_req(ctl_tx_pause_req),
+    .s_axis_rx_tdata(mrx_tdata), .s_axis_rx_tkeep(mrx_tkeep), .s_axis_rx_tvalid(mrx_tvalid),
+    .s_axis_rx_tlast(mrx_tlast), .s_axis_rx_tuser(mrx_tuser),
+    .m_axis_tx_tdata(mtx_tdata), .m_axis_tx_tkeep(mtx_tkeep), .m_axis_tx_tvalid(mtx_tvalid),
+    .m_axis_tx_tready(mtx_tready), .m_axis_tx_tlast(mtx_tlast),
+    .mac_pause_hold(mac_pause_hold), .mac_pause_valid(mac_pause_valid),
+    .mac_pause_quanta(mac_pause_quanta), .mac_pause_req(mac_pause_req),
     .m_eng_tdata(erx_tdata), .m_eng_tkeep(erx_tkeep), .m_eng_tvalid(erx_tvalid), .m_eng_tready(erx_tready),
     .m_eng_tlast(erx_tlast),
     .s_eng_tdata(etx_tdata), .s_eng_tkeep(etx_tkeep), .s_eng_tvalid(etx_tvalid), .s_eng_tready(etx_tready),
@@ -405,13 +448,14 @@ rocelet_axi_mem #(.ADDR_W(M_AXI_ADDR_W), .ID_W(M_AXI_ID_W), .RD_BUF(MEM_RD_BUF),
 );
 
 // ---------------- statistics ----------------
-logic pause_rx_r = 1'b0, pause_tx_r = 1'b0, fec_c_r = 1'b0, fec_u_r = 1'b0;
+logic pause_rx_r = 1'b0, pause_tx_r = 1'b0, fec_c_r = 1'b0, fec_u_r = 1'b0, gap_r = 1'b0;
 logic wr_fire_r = 1'b0, wc_fire_r = 1'b0, wc_err_r = 1'b0, rc_fire_r = 1'b0;
 always_ff @(posedge clk) begin
-    pause_rx_r <= stat_rx_pause;
-    pause_tx_r <= stat_tx_pause;
-    fec_c_r    <= stat_rx_rsfec_corrected_cw_inc;
-    fec_u_r    <= stat_rx_rsfec_uncorrected_cw_inc;
+    pause_rx_r <= mac_pause_rx_frame;
+    pause_tx_r <= mac_pause_tx_frame;
+    fec_c_r    <= mac_fec_corr_inc;
+    fec_u_r    <= mac_fec_uncorr_inc;
+    gap_r      <= mtx_gap;
     wr_fire_r  <= s_axis_wr_tvalid && s_axis_wr_tready;
     wc_fire_r  <= wc_valid && m_axis_wc_tready;
     wc_err_r   <= wc_valid && m_axis_wc_tready && (wc_status != 8'd0);
@@ -451,7 +495,7 @@ always_comb begin
     ev_cnt[C_TX_READ_RESP]  = cev.tx_read_resp;
     ev_cnt[C_TX_ARP_ICMP]   = mev.tx_arp_icmp;
     ev_cnt[C_TX_OTHER]      = mev.tx_other;
-    ev_cnt[C_TX_UNDERRUN]   = mev.tx_underrun;
+    ev_cnt[C_TX_UNDERRUN]   = mev.tx_underrun || gap_r;
     ev_cnt[C_TX_VLAN_TAG]   = mev.tx_vlan_tag;
     ev_cnt[C_REQ_WR]        = wr_fire_r;
     ev_cnt[C_REQ_WC]        = wc_fire_r;

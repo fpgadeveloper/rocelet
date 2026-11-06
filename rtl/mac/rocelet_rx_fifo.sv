@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //
 // rocelet_rx_fifo - store-and-forward RX frame FIFO for a MAC without RX back-pressure
-// (the UltraScale+ CMAC's rx_axis has no tready: every beat must be taken in its clock).
+// (a MAC RX AXI-Stream has no tready, e.g. the UltraScale+ CMAC's rx_axis: every beat must be
+// taken in its clock; tvalid may drop between beats, e.g. behind rocelet_rx_upsize).
 // Everything behind it can stall, so frames are written whole and released only after
 // their last beat:
 //  * a frame is offered downstream once its last beat is written and it was not flagged

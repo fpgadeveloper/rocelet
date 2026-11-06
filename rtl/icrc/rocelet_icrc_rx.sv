@@ -2,7 +2,7 @@
 //
 // rocelet_icrc_rx - RoCE v2 ICRC checker for a 512-bit receive stream.
 //
-// s_axis: Ethernet frames without FCS (as delivered by the CMAC), ICRC included
+// s_axis: Ethernet frames without FCS (as delivered by the MAC), ICRC included
 //         as the last 4 bytes of the RoCE v2 payload, contiguous tkeep.
 // The CRC runs over the masked frame INCLUDING the received ICRC; a good frame
 // leaves the CRC register at the CRC-32 residue 0xDEBB20E3 (the same property

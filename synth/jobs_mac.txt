@@ -1,0 +1,6 @@
+# rocelet v0.3 MAC widths, out of context, placed and routed (name | top | generics | flow | period ns | part)
+# 512 bits on the KCU116 device at the 100G CMAC clock: the regression figure against v0.2.2 (v1 defaults).
+# 256 / 64 bits (width converters inside rocelet_top) on the ZCU106 device at the 40G / 10G MAC clock.
+mac512_ku5p  | rocelet_top | CLK_KHZ=322266                                           | route | 3.103 |
+mac256_zu7ev | rocelet_top | MAC_WIDTH=256 CLK_MHZ=156 CLK_KHZ=156250 LINK_GBPS=40    | route | 6.400 | xczu7ev-ffvc1156-2-e
+mac64_zu7ev  | rocelet_top | MAC_WIDTH=64 CLK_MHZ=156 CLK_KHZ=156250 LINK_GBPS=10     | route | 6.400 | xczu7ev-ffvc1156-2-e

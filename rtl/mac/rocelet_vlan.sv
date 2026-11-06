@@ -15,7 +15,7 @@
 //                 holds more than 60 bytes (the frame grows by a beat).
 //
 // Byte order: byte i of the frame is tdata[8i +: 8]; tkeep is contiguous from
-// bit 0 on every beat (the CMAC and the engine produce no other).
+// bit 0 on every beat (the MAC and the engine produce no other).
 //
 // Copyright (c) 2026 Opsero Electronic Design Inc.
 

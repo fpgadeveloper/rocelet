@@ -12,8 +12,8 @@
 package rocelet_regs_pkg;
 
 localparam logic [7:0] VER_MAJOR = 8'd0;
-localparam logic [7:0] VER_MINOR = 8'd2;
-localparam logic [7:0] VER_PATCH = 8'd2;
+localparam logic [7:0] VER_MINOR = 8'd3;
+localparam logic [7:0] VER_PATCH = 8'd0;
 
 localparam logic [15:0] R_ID                 = 16'h000;   // RO
 localparam logic [15:0] R_VERSION            = 16'h004;   // RO
@@ -21,6 +21,8 @@ localparam logic [15:0] R_BUILD0             = 16'h008;   // RO
 localparam logic [15:0] R_BUILD1             = 16'h00C;   // RO
 localparam logic [15:0] R_BUILD2             = 16'h010;   // RO
 localparam logic [15:0] R_BUILD3             = 16'h014;   // RO
+localparam logic [15:0] R_CAPS               = 16'h018;   // RO
+localparam logic [15:0] R_CLK_KHZ            = 16'h01C;   // RO
 localparam logic [15:0] R_CTRL               = 16'h020;   // RW
 localparam logic [15:0] R_STATUS             = 16'h024;   // RO
 localparam logic [15:0] R_CMD                = 16'h028;   // W1
@@ -41,6 +43,7 @@ localparam logic [15:0] R_RETRY              = 16'h064;   // RW
 localparam logic [15:0] R_PACE_RATE          = 16'h068;   // RW
 localparam logic [15:0] R_PACE_BURST         = 16'h06C;   // RW
 localparam logic [15:0] R_LINK_GRACE         = 16'h070;   // RW
+localparam logic [15:0] R_PAUSE_QCLK         = 16'h074;   // RW
 localparam logic [15:0] R_QP_INDEX           = 16'h100;   // RW
 localparam logic [15:0] R_QP_FLAGS           = 16'h104;   // RW
 localparam logic [15:0] R_QP_SQ_PSN          = 16'h108;   // RW

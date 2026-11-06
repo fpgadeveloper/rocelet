@@ -180,8 +180,8 @@ typedef struct packed {
 
 // ---------------- event pulses of rocelet_mac (statistics) ----------------
 typedef struct packed {
-    logic       rx_frame;        // a frame from the CMAC (each tlast)
-    logic       rx_fcs_err;      // ... flagged bad by the CMAC, dropped
+    logic       rx_frame;        // a frame from the MAC (each tlast)
+    logic       rx_fcs_err;      // ... flagged bad by the MAC, dropped
     logic       rx_fifo_drop;    // ... dropped by the RX FIFO (full, oversize, reset)
     logic       rx_roce;         // a frame to the engine
     logic       rx_arp;
@@ -190,15 +190,15 @@ typedef struct packed {
     logic       rx_other_drop;   // dropped (other traffic disabled)
     logic       rx_vlan_strip;
     logic       rx_vlan_other;
-    logic       tx_frame;        // a frame started towards the CMAC
+    logic       tx_frame;        // a frame started towards the MAC
     logic       tx_arp_icmp;
     logic       tx_other;
-    logic       tx_underrun;     // tvalid low inside a frame towards the CMAC
+    logic       tx_underrun;     // tvalid low inside a frame towards the MAC
     logic       tx_vlan_tag;
     logic       pause_load;      // received PAUSE in force (timer loaded)
     logic       pause_xoff;      // PAUSE requested from the RX FIFO level
-    logic [6:0] rx_bytes;        // bytes received from the CMAC this clock
-    logic [6:0] tx_bytes;        // bytes sent to the CMAC this clock
+    logic [6:0] rx_bytes;        // bytes received from the MAC this clock
+    logic [6:0] tx_bytes;        // bytes sent to the MAC this clock
 } mac_ev_t;
 
 endpackage

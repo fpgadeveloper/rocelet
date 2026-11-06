@@ -11,9 +11,7 @@ The formats below were read from NVIDIA's repository (holoscan-sensor-bridge 3.0
 `src/hololink/core/frame_metadata_parser.hpp` (`parse_frame_metadata`, which
 `Hololink::deserialize_metadata` in `src/hololink/core/hololink.cpp` calls) and
 `src/hololink/operators/roce_receiver/roce_receiver.cpp` (`page_from_imm`, `psn_from_imm`,
-`same_psn`). They were first read from v2.7.0; 3.0.0 has the same packet, immediate and
-metadata formats (the metadata parser moved from `hololink.cpp` into its own header). No NVIDIA
-code is used in rocelet.
+`same_psn`). No NVIDIA code is used in rocelet.
 
 ## What the host expects (the data plane)
 
@@ -70,7 +68,7 @@ answer.
 
 ## Done in the design
 
-The [qsfp28-fmc-rocelet](https://qsfp28-rocelet.ethernetfmc.com/hsb.html) reference design
+The [qsfp28-fmc-rocelet](https://qsfp28-rocelet.ethernetfmc.com/en/latest/hsb.html) reference design
 implements everything above the data plane: the firmware control plane (BOOTP enumeration with
 an Opsero device UUID, 98183d0f-18ee-4719-a3b4-ca69e9b94c97, compat-id and HSB IP version
 0x2603, the register protocol on UDP 8192, the `DP_*` register layout that the HSB 3.0.0 host

@@ -16,7 +16,7 @@
 //   re-issue), rocelet_ack_proc (window, ACK/NAK, timers), payload from rocelet_retx_ring
 //   (RTX_MODE "RING"), from memory (m_qrd, "REREAD") or straight from the WR stream
 //   ("LOSSY", lossy resume).
-// One clock domain (the CMAC user clock); no CDC, no interconnect, no vendor IP.
+// One clock domain (the MAC user clock); no CDC, no interconnect, no vendor IP.
 //
 // Copyright (c) 2026 Opsero Electronic Design Inc.
 

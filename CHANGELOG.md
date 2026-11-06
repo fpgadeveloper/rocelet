@@ -3,6 +3,118 @@
 All notable changes to rocelet. Versions follow semantic versioning; `-dev` versions are work in
 progress on the `dev` branch, releases are on `main` and tagged.
 
+## v0.3.0 (2026-11-05)
+
+Generic MAC interface for 40G / 10G (and 25G) MACs at 156.25 MHz-class clocks, for the
+qsfp28-fmc-rocelet ZCU106 target with the open-source `opsero-ethernet-mac` (omac) IPs. The
+engine stays 512 bits wide and runs at the MAC clock; the width conversion is inside rocelet.
+At the defaults (`MAC_WIDTH` 512, `LINK_GBPS` 100) the MAC side behaves as v0.2.2, but **ports
+were renamed** (a design built on v0.2.x changes its `rocelet_top` connections; mapping table in
+docs/interface.md, "Mapping").
+
+### Validated on
+
+ZCU106 (XCZU7EV-2) + Opsero 2x QSFP28 FMC (OP120) on HPC0, port 0, in the qsfp28-fmc-rocelet
+reference design (release 0.5.0) with the open-source opsero-ethernet-mac v0.1.0 MACs, 3 m
+passive QSFP28 DAC to an **NVIDIA ConnectX-6 Dx** (firmware 22.43.2566) forced to the line rate,
+FEC off, MTU 4200 (docs/throughput.md has every figure):
+
+- **40G (omac_40g, 256-bit MAC, 156.25 MHz):** FPGA WRITE with immediate into host memory
+  38.83 Gb/s, host WRITE 38.74 Gb/s, host SEND 39.20 Gb/s, host READ of FPGA memory 38.73 Gb/s
+  at PMTU 4096 and at line rate also at PMTU 1024 (37.03) and 512 (34.43); host WRITE / READ of
+  a PS DDR window at 38.75 / 38.74 Gb/s; Holoscan Sensor Bridge UC stream into GPU memory at
+  39.0 Gb/s with every frame checked and 0 lost; 802.3x PAUSE in both directions (level mode
+  `mac_pause_hold` with `PAUSE_RX_LEVEL`; the FPGA's WRITE with immediate held from 38.78 to
+  23.89 Gb/s by host PAUSE frames, 0 lost; 174,494 PAUSE frames sent and honoured).
+- **10G (omac_10g, 64-bit MAC):** WRITE with immediate 9.80, host WRITE 9.69-9.71, SEND 9.80,
+  READ 9.44-9.57 Gb/s.
+- The design's 19-test self-test (near-end PMA loopback) passes at both speeds.
+- KCU116 (512-bit CMAC): the ports renamed, the same regression as v0.2.2 at 512 bits; the
+  qsfp28-fmc-rocelet kcu116 target builds and closes timing with v0.3.0 (not re-run on
+  hardware for this release).
+
+### Added
+
+- **`MAC_WIDTH` parameter** (64, 128, 256, 512; default 512): `s_axis_rx_*` / `m_axis_tx_*` are
+  `MAC_WIDTH` bits; below 512 `rocelet_rx_upsize` packs the MAC's RX beats into 512-bit beats
+  (frames start in lane 0, partial last beats, `tvalid` gaps, the bad-frame flag OR-ed over the
+  frame, the partial beat dropped on `mac_rx_reset`) and `rocelet_tx_downsize` unpacks TX beats
+  without a gap inside a frame (the TX path was already store-and-forward and the arbiter
+  frame-atomic, so no extra FIFO is needed; checked by reading the RTL and in simulation, full
+  rate back to back). New file `rtl/mac/rocelet_mac_width.sv`. Engine capacity per width:
+  docs/interface.md, "MAC width and throughput"; the measured rates: docs/throughput.md.
+- **`LINK_GBPS` parameter** (default 100) and **`PAUSE_QCLK` register** (0x074): the length of a
+  received PAUSE quantum in clocks x 256, reset value from `CLK_KHZ` and `LINK_GBPS`, writable by
+  firmware for a link that runs at another speed.
+- **`CLK_KHZ` parameter** (default 0 = `CLK_MHZ` x 1000) for the exact clock (156250, 322266).
+- **Capability registers** `CAPS` (0x018: `MAC_WIDTH`, `LINK_GBPS`) and `CLK_KHZ` (0x01C); with
+  `ID`, `VERSION` and `BUILD0..3` firmware and daemons discover the build (docs/interface.md,
+  "Capabilities").
+- **Documentation:** docs/throughput.md (rates measured at 100G, 40G and 10G side by side) and
+  docs/designs.md (designs using rocelet: the qsfp28-fmc-rocelet kcu116 and zcu106 targets);
+  docs/interface.md "MAC side" rewritten for any MAC (requirements, the CMAC and omac
+  connections, the v0.2 -> v0.3 mapping, MAC width and throughput, timers at 156.25 MHz,
+  capabilities); docs/integration.md section 4 (MAC configuration: parameters per MAC, the 100G
+  CMAC, a 40G or 10G MAC); docs/host-setup.md 40G / 10G link row; the block diagram regenerated
+  for `MAC_WIDTH`; docs/resources.md "MAC widths".
+- Simulation: `mac_width` (converter unit test at 64 / 128 / 256 bits, self-checking, mutation-
+  checked), `pause` (PAUSE hold at 10G / 25G / 40G / 100G clocks against 512 bit times x quanta,
+  XON, `PAUSE_QCLK` rewrite, level mode, TX held while paused, capability registers),
+  `resp_top_w256` / `resp_top_w64` and `pair_top_w256` / `pair_top_w64` (the whole IP with the
+  MAC model at 256 / 64 bits: partial last beats, `tvalid` gaps inside received frames, PAUSE as
+  the MAC's hold level); `sim/test_resp.py` and `sim/test_pair.py` take `--mac-width`.
+- **Tooling:** `make synth-mac` (place and route at the three MAC widths); `synth/synth_ooc.tcl`
+  takes a part per job and writes a `part` column to `results.csv`; `synth/report.py --mac`
+  writes the "MAC widths" section of docs/resources.md; `report.py` takes `--version` (the
+  rocelet version the results were built from, or `rtl` right after a build) instead of
+  labelling every result with the version of the RTL in the tree, keeps the sections it does
+  not regenerate, and skips `results.csv` rows that do not match the file's header. `rtl/rocelet_bd.v` regenerated for the new ports and parameters.
+
+### Measured (simulation 2026-11-03, out-of-context implementation 2026-11-05)
+
+- Regression (`make sim`): **PASS, 21 tests, 0 failed** (the 15 v0.2.2 tests at 512 bits plus the
+  six above), 30 min. PAUSE hold within 0.2 % of 512 bit times x quanta at 10G, 25G, 40G and
+  100G clocks (100+ quanta).
+- Placed and routed v1 top (docs/resources.md, "v1 configuration"): xcku5p at 322.27 MHz
+  20,732 LUT, 25,122 FF, 37 BRAM36, 8 URAM, 1 DSP, WNS +0.105 ns (v0.2.2: 20,812 LUT, +0.087 ns);
+  `rocelet_core` 14,994 LUT after synthesis. One DSP slice (the PAUSE multiply); BRAM / URAM
+  unchanged (37 / 8).
+- Placed and routed at each MAC width (docs/resources.md, "MAC widths"): 512-bit CMAC on the
+  xcku5p at 322.27 MHz 20,654 LUT, WNS +0.115 ns (the v1 configuration with `CLK_KHZ` 322266, its
+  own run); 256-bit MAC on the xczu7ev-2 at 156.25 MHz 20,786 LUT, WNS +1.267 ns; 64-bit MAC
+  21,336 LUT, WNS +1.407 ns.
+
+### Changed
+
+- **MAC ports renamed to generic names** (interface change log 2026-11-03): `mac_rx_aligned` ->
+  `mac_rx_status`; `stat_rx_pause_req[8:0]` -> `mac_pause_hold`, `stat_rx_pause_valid[8:0]` ->
+  `mac_pause_valid`, `stat_rx_pause_quanta8` -> `mac_pause_quanta`, `ctl_tx_pause_req[8:0]` ->
+  `mac_pause_req` (1 bit each: only bit 8, global pause, was ever used), `stat_rx_pause` /
+  `stat_tx_pause` -> `mac_pause_rx_frame` / `mac_pause_tx_frame`,
+  `stat_rx_rsfec_(un)corrected_cw_inc` -> `mac_fec_(un)corr_inc`. `STATUS.MAC_ALIGNED` ->
+  `STATUS.MAC_RX_STATUS` (same bit). Comments and docs say "MAC" where they said "CMAC"; the
+  CMAC remains the documented 100G example. rocelet never had CMAC `ctl_*` configuration
+  ports: the static CMAC control stays in the design.
+- `CNT_PAUSE_GATE` also counts rises of `mac_pause_hold` with `CTRL.PAUSE_RX_LEVEL`;
+  `CNT_TX_UNDERRUN` also counts gaps after the TX width converter.
+- The received-PAUSE timer is loaded 2 clocks later (quanta x `PAUSE_QCLK` on one DSP slice).
+- `VERSION` 0.3.0.
+
+### Fixed
+
+- **PAUSE quantum at link speeds below 100G**: v0.2.x timed a received quantum as 5.12 ns (the
+  100G value) at any speed, 2.5x too short at 40G and 10x at 10G (only with a MAC that reports
+  quanta; level mode was not affected).
+
+### Notes for designs moving to v0.3
+
+- Rename the MAC connections (table above); for the CMAC `ctl_tx_pause_req = {mac_pause_req,
+  8'd0}` and `mac_pause_valid = stat_rx_pause_valid[8]` etc.
+- Set `CLK_KHZ` (322266 for the CMAC) and, for a narrow MAC, `MAC_WIDTH`, `LINK_GBPS`,
+  `CLK_MHZ` 156 / `CLK_KHZ` 156250; set `CTRL.PAUSE_RX_LEVEL` for a MAC that reports PAUSE as a
+  level.
+- Firmware: convert clock counts with `CLK_KHZ` (or the design's own clock constant).
+
 ## v0.2.2 (2026-10-31)
 
 First release. It collects the development versions v0.2.0-dev and v0.2.1-dev (their entries

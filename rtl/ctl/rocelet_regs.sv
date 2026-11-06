@@ -36,6 +36,9 @@ module rocelet_regs
     parameter int          RX_FIFO_DEPTH     = 512,
     parameter int          TX_FIFO_DEPTH     = 512,
     parameter int          CLK_MHZ           = 322,
+    parameter int          CLK_KHZ           = 0,       // 0 = CLK_MHZ x 1000
+    parameter int          LINK_GBPS         = 100,
+    parameter int          MAC_WIDTH         = 512,
     parameter bit          READ_CONT_DEFAULT = 1'b1,
     localparam int QPW = (NUM_QP > 1) ? $clog2(NUM_QP) : 1,
     localparam int MRW = (NUM_MR > 1) ? $clog2(NUM_MR) : 1
@@ -94,6 +97,7 @@ module rocelet_regs
     output logic [19:0]            pace_inc,
     output logic [15:0]            pace_burst,
     output logic [23:0]            link_grace,
+    output logic [19:0]            pause_qclk,
 
     // QP / window configuration (one-clock strobes, data valid with them)
     output logic                   qp_we,
@@ -122,7 +126,7 @@ module rocelet_regs
 
     // status
     input  wire logic              st_in_reset,
-    input  wire logic              st_mac_aligned,
+    input  wire logic              st_mac_rx_status,
     input  wire logic              st_link_up,
     input  wire logic              st_timer_hold,
     input  wire logic              st_pause_gate,
@@ -167,8 +171,14 @@ endfunction
 
 // ---------------- configuration registers ----------------
 localparam logic [31:0] CTRL_RST = 32'h00001AA6 | (READ_CONT_DEFAULT ? 32'h8 : 32'h0);
+// engine clock in kHz; one PAUSE quantum (512 bit times at LINK_GBPS) in clocks x 256, rounded up
+localparam longint KHZ = (CLK_KHZ != 0) ? longint'(CLK_KHZ) : longint'(CLK_MHZ) * 1000;
+localparam longint QCLK_RST = (131072 * KHZ + longint'(LINK_GBPS) * 1000000 - 1) / (longint'(LINK_GBPS) * 1000000);
+if (QCLK_RST < 1 || QCLK_RST > 1048575) begin : g_bad_qclk
+    $error("rocelet_regs: PAUSE_QCLK reset value out of range (CLK_KHZ / LINK_GBPS)");
+end
 logic [31:0] r_ctrl, r_mac_lo, r_mac_hi, r_ip4, r_ip_hdr, r_tick, r_ackto, r_rnrmin, r_rnrmax, r_rnrnak,
-             r_ackreq, r_vtci, r_pwm, r_retry, r_prate, r_pburst, r_lgrace, r_ip6 [4];
+             r_ackreq, r_vtci, r_pwm, r_retry, r_prate, r_pburst, r_lgrace, r_pqclk, r_ip6 [4];
 logic [31:0] q_index, q_flags, q_sqpsn, q_rqpsn, q_pmtu, q_dmac_lo, q_dmac_hi, q_dip [4], q_dqpn, q_udp, q_ipv6;
 logic [31:0] m_index, m_flags, m_rkey, m_va_lo, m_va_hi, m_len, m_la_lo, m_la_hi;
 logic        clr_cnt, clr_err;
@@ -205,6 +215,7 @@ always_ff @(posedge clk) begin
             R_PACE_RATE:   r_prate  <= wmask(r_prate, w_d, w_s);
             R_PACE_BURST:  r_pburst <= wmask(r_pburst, w_d, w_s);
             R_LINK_GRACE:  r_lgrace <= wmask(r_lgrace, w_d, w_s);
+            R_PAUSE_QCLK:  r_pqclk  <= wmask(r_pqclk, w_d, w_s);
             R_QP_ERR_CMD:  begin err_we <= 1'b1; err_qp <= QPW'(w_d[7:0]); end
             R_QP_INDEX:    q_index  <= wmask(q_index, w_d, w_s);
             R_QP_FLAGS:    q_flags  <= wmask(q_flags, w_d, w_s);
@@ -244,7 +255,7 @@ always_ff @(posedge clk) begin
         r_ip_hdr <= RST_IP_HDR; r_tick <= 32'(CLK_MHZ); r_ackto <= RST_ACK_TIMEOUT; r_rnrmin <= RST_RNR_MIN;
         r_rnrmax <= RST_RNR_MAX; r_rnrnak <= RST_RNR_NAK_TIMER; r_ackreq <= RST_ACKREQ_N; r_vtci <= RST_VLAN_TCI;
         r_pwm <= RST_PAUSE_WM; r_retry <= RST_RETRY; r_prate <= RST_PACE_RATE; r_pburst <= RST_PACE_BURST;
-        r_lgrace <= RST_LINK_GRACE;
+        r_lgrace <= RST_LINK_GRACE; r_pqclk <= 32'(QCLK_RST);
         for (int i = 0; i < 4; i++) begin r_ip6[i] <= '0; q_dip[i] <= '0; end
         q_index <= '0; q_flags <= '0; q_sqpsn <= '0; q_rqpsn <= '0; q_pmtu <= RST_QP_PMTU;
         q_dmac_lo <= '0; q_dmac_hi <= '0; q_dqpn <= '0; q_udp <= '0; q_ipv6 <= '0;
@@ -285,6 +296,7 @@ always_comb begin
     pace_inc      = r_prate[19:0];
     pace_burst    = r_pburst[15:0];
     link_grace    = r_lgrace[23:0];
+    pause_qclk    = r_pqclk[19:0];
     qp_idx        = QPW'(q_index);
     qp_valid      = q_flags[0];
     qp_type       = q_flags[2:1];
@@ -398,9 +410,11 @@ always_ff @(posedge clk) begin
             R_BUILD1:        rd_reg <= {3'd0, 4'(PMTU_LOG2), 9'(MAX_WR), 16'(RTX_MODE_ID == 0 ? RING_BYTES / 1024 : 0)};
             R_BUILD2:        rd_reg <= {8'd0, QPN_BASE};
             R_BUILD3:        rd_reg <= {16'(TX_FIFO_DEPTH), 16'(RX_FIFO_DEPTH)};
+            R_CAPS:          rd_reg <= {8'd0, 8'(LINK_GBPS), 16'(MAC_WIDTH)};
+            R_CLK_KHZ:       rd_reg <= {8'd0, 24'(KHZ)};
             R_CTRL:          rd_reg <= r_ctrl;
             R_STATUS:        rd_reg <= {25'd0, st_timer_hold, st_link_up, err_latch, st_pause_req, st_pause_gate,
-                                        st_mac_aligned, st_in_reset};
+                                        st_mac_rx_status, st_in_reset};
             R_MAC_LO:        rd_reg <= r_mac_lo;
             R_MAC_HI:        rd_reg <= r_mac_hi;
             R_IP4:           rd_reg <= r_ip4;
@@ -417,6 +431,7 @@ always_ff @(posedge clk) begin
             R_PACE_RATE:     rd_reg <= r_prate;
             R_PACE_BURST:    rd_reg <= r_pburst;
             R_LINK_GRACE:    rd_reg <= {8'd0, r_lgrace[23:0]};
+            R_PAUSE_QCLK:    rd_reg <= {12'd0, r_pqclk[19:0]};
             R_QP_INDEX:      rd_reg <= q_index;
             R_QP_FLAGS:      rd_reg <= q_flags;
             R_QP_SQ_PSN:     rd_reg <= q_sqpsn;

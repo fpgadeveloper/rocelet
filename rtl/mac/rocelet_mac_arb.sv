@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //
-// rocelet_mac_arb - frame-atomic N-input arbiter in front of the CMAC TX:
+// rocelet_mac_arb - frame-atomic N-input arbiter in front of the MAC TX:
 // fixed priority, lowest input index first (control traffic: ARP/ICMP replies and
 // the other-traffic port before the engine), switching only at frame boundaries. Inputs must
 // be store-and-forward (no pause inside a frame); the output is registered.

@@ -17,8 +17,10 @@
 # every transmitted ACK / NAK / READ response frame; all are compared.
 # With --top the same traffic goes through the complete IP (tb_top_resp: rocelet_top with
 # its MAC glue, AXI-Lite configuration and AXI4 memory master into a memory model); the
-# memory check then compares the final memory image.
-# Usage: test_resp.py [--top] [nops] [seed] [config...]
+# memory check then compares the final memory image. --mac-width 64 / 128 / 256 (with --top):
+# the MAC model at that width (frames in MAC-width beats with partial last beats and random
+# tvalid gaps inside frames) and the IP's width converters in the path.
+# Usage: test_resp.py [--top] [--mac-width N] [nops] [seed] [config...]
 #
 # Copyright (c) 2026 Opsero Electronic Design Inc.
 
@@ -196,11 +198,13 @@ class Model:
             self.err.append((q, NAK_INV if act == 'NAK_INV' else NAK_ACC))
 
 
-def run(name, nops, seed, top=False):
+def run(name, nops, seed, top=False, mac_w=512):
     C = CONFIGS[name]
     g = C['g']
+    if mac_w != 512:
+        g = dict(g, MAC_WIDTH=mac_w)
     rng = random.Random(seed)
-    d = os.path.join(S.BUILD, ('top_resp_' if top else 'resp_') + name)
+    d = os.path.join(S.BUILD, ('top_resp_' if top else 'resp_') + ('w%d_' % mac_w if mac_w != 512 else '') + name)
     os.makedirs(d, exist_ok=True)
     NQ, NM = g['NUM_QP'], g['NUM_MR']
     qps = {}
@@ -425,10 +429,11 @@ def run(name, nops, seed, top=False):
             emit(q, R.OP['SEND_ONLY'], b'after-error', psn=(peer[q]['psn'] + 1) & M24)
     with open(os.path.join(d, 'rx.txt'), 'w') as f:
         for fr, m, sy in frames:
-            for last, n, ch in R.frame_to_beats(fr):
-                f.write(R.beat_line(last, n, ch) + ' %x %d\n' % (m, sy))
+            for last, n, ch in R.frame_to_beats(fr, mac_w // 8):
+                f.write(R.beat_line(last, n, ch, mac_w // 8) + ' %x %d\n' % (m, sy))
     plus = ['dir=' + d, 'seed=%d' % seed, 'gap=%s' % os.environ.get('GAP', '15'),
-            'bp=%s' % os.environ.get('BP', '25'), 'read_cont=%d' % C['read_cont']]
+            'bp=%s' % os.environ.get('BP', '25'), 'read_cont=%d' % C['read_cont'],
+            'igap=%d' % (10 if mac_w != 512 else 0)]
     out, log = S.xsim(d, 'tb_top_resp' if top else 'tb_core_resp', g, FILES_TOP if top else FILES, plus)
     print('[%s] %d frames in: %s' % (name, len(frames), out.replace('\n', ' | ')))
     if 'TB_DONE' not in out:
@@ -538,11 +543,20 @@ def main():
     args = sys.argv[1:]
     top = '--top' in args
     args = [a for a in args if a != '--top']
+    mac_w = 512
+    if '--mac-width' in args:
+        i = args.index('--mac-width')
+        mac_w = int(args[i + 1])
+        del args[i:i + 2]
+        if not top:
+            print('--mac-width needs --top')
+            return 1
     nops = int(args[0]) if len(args) > 0 else 60
     seed = int(args[1]) if len(args) > 1 else 1
     names = args[2:] or list(CONFIGS)
-    fails = sum(run(n, nops, seed, top) for n in names)
-    print('%sRESP TEST %s (%d failures)' % ('TOP ' if top else '', 'PASS' if fails == 0 else 'FAIL', fails))
+    fails = sum(run(n, nops, seed, top, mac_w) for n in names)
+    print('%sRESP TEST%s %s (%d failures)' % ('TOP ' if top else '', ' (%d-bit MAC)' % mac_w if mac_w != 512 else '',
+                                             'PASS' if fails == 0 else 'FAIL', fails))
     return 1 if fails else 0
 
 

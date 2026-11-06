@@ -2,8 +2,8 @@
 //
 // rocelet_rx_parser - RoCE v2 receive parser / classifier / header strip at 512 bits.
 //
-// s_axis: Ethernet frames (no FCS) from the CMAC, after the ICRC check
-//         (rocelet_icrc_rx PASS_DATA = 1: tuser = ICRC bad on the last beat; the CMAC
+// s_axis: Ethernet frames (no FCS) from the MAC, after the ICRC check
+//         (rocelet_icrc_rx PASS_DATA = 1: tuser = ICRC bad on the last beat; the MAC
 //         FCS-error flag can be OR-ed in).
 // Classification on beat 0: EtherType 0x0800 (IPv4, IHL 5, not fragmented,
 // protocol 17) or 0x86DD (IPV6_EN, next header 17), destination IP = my IP, UDP

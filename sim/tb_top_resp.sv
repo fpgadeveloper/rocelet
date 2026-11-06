@@ -3,8 +3,11 @@
 // tb_top_resp - the responder test (test_resp.py) through the complete IP: rocelet_top with
 // its MAC glue (RX FIFO, classifier, TX FIFO, arbiter, PAUSE), AXI-Lite register file
 // (all configuration written through AXI-Lite) and AXI4 memory master (axi_slave_model).
-// The frames from +dir=/rx.txt are fed to the CMAC RX port (no back-pressure, as a CMAC);
+// The frames from +dir=/rx.txt are fed to the MAC RX port (no back-pressure, as a MAC);
 // the feeder honours the IP's PAUSE requests at frame boundaries, as a link partner does.
+// MAC_WIDTH 64 / 128 / 256: the MAC model runs at that width (rx.txt holds MAC_WIDTH/8-byte
+// beats, partial last beats), with random tvalid gaps inside frames (+igap= per cent), and
+// the IP's width converters in the path; tx.txt logs the MAC-width TX beats.
 // Files and logs as tb_core_resp, plus mem.txt (the bytes written to memory).
 //
 // Copyright (c) 2026 Opsero Electronic Design Inc.
@@ -21,22 +24,24 @@ module tb_top_resp
     parameter int NUM_MR       = 4,
     parameter bit PMTU_RUNTIME = 1'b1,
     parameter bit IPV6_EN      = 1'b0,
-    parameter int READ_DEPTH   = 4
+    parameter int READ_DEPTH   = 4,
+    parameter int MAC_WIDTH    = 512
 );
+localparam int KB = MAC_WIDTH / 8;
 localparam int QPW = (NUM_QP > 1) ? $clog2(NUM_QP) : 1;
 
 logic clk = 1'b0, rst = 1'b1;
 always #1.551 clk = ~clk;
 
-// CMAC side
-logic [511:0] rx_tdata = '0;
-logic [63:0]  rx_tkeep = '0;
-logic         rx_tvalid = 1'b0, rx_tlast = 1'b0;
-wire  logic [511:0] tx_tdata;
-wire  logic [63:0]  tx_tkeep;
+// MAC side
+logic [MAC_WIDTH-1:0] rx_tdata = '0;
+logic [KB-1:0]        rx_tkeep = '0;
+logic                 rx_tvalid = 1'b0, rx_tlast = 1'b0;
+wire  logic [MAC_WIDTH-1:0] tx_tdata;
+wire  logic [KB-1:0]        tx_tkeep;
 wire  logic         tx_tvalid, tx_tlast, tx_tuser;
 logic               tx_tready = 1'b0;
-wire  logic [8:0]   pause_req;
+wire  logic         pause_req;
 // responder streams
 wire  logic [511:0] send_tdata;
 wire  logic [63:0]  send_tkeep;
@@ -70,17 +75,16 @@ wire logic [63:0] wstrb;
 rocelet_top #(
     .NUM_QP(NUM_QP), .NUM_MR(NUM_MR), .PMTU_RUNTIME(PMTU_RUNTIME), .IPV6_EN(IPV6_EN), .READ_DEPTH(READ_DEPTH),
     .QPN_BASE(24'h000100), .RTX_MODE("RING"), .RING_BYTES(65536), .RING_RAM("block"), .MAX_WR(16),
-    .MEM_RD_BUF(128), .CLK_MHZ(16)
+    .MEM_RD_BUF(128), .CLK_MHZ(16), .MAC_WIDTH(MAC_WIDTH)
 ) dut (
     .clk(clk), .rst(rst), .irq(),
-    .mac_rx_reset(1'b0), .mac_tx_reset(1'b0), .mac_rx_aligned(1'b1), .link_up(1'b1),
+    .mac_rx_reset(1'b0), .mac_tx_reset(1'b0), .mac_rx_status(1'b1), .link_up(1'b1),
     .s_axis_rx_tdata(rx_tdata), .s_axis_rx_tkeep(rx_tkeep), .s_axis_rx_tvalid(rx_tvalid),
     .s_axis_rx_tlast(rx_tlast), .s_axis_rx_tuser(1'b0),
     .m_axis_tx_tdata(tx_tdata), .m_axis_tx_tkeep(tx_tkeep), .m_axis_tx_tvalid(tx_tvalid),
     .m_axis_tx_tready(tx_tready), .m_axis_tx_tlast(tx_tlast), .m_axis_tx_tuser(tx_tuser),
-    .stat_rx_pause_req('0), .stat_rx_pause_valid('0), .stat_rx_pause_quanta8('0), .stat_rx_pause(1'b0),
-    .stat_tx_pause(1'b0), .ctl_tx_pause_req(pause_req),
-    .stat_rx_rsfec_corrected_cw_inc(1'b0), .stat_rx_rsfec_uncorrected_cw_inc(1'b0),
+    .mac_pause_hold(1'b0), .mac_pause_valid(1'b0), .mac_pause_quanta('0), .mac_pause_req(pause_req),
+    .mac_pause_rx_frame(1'b0), .mac_pause_tx_frame(1'b0), .mac_fec_corr_inc(1'b0), .mac_fec_uncorr_inc(1'b0),
     .m_axis_other_tdata(), .m_axis_other_tkeep(), .m_axis_other_tvalid(), .m_axis_other_tready(1'b1),
     .m_axis_other_tlast(),
     .s_axis_other_tdata('0), .s_axis_other_tkeep('0), .s_axis_other_tvalid(1'b0), .s_axis_other_tready(),
@@ -127,7 +131,7 @@ wire logic [QPW-1:0] err_qp    = dut.u_core.m_resp_err_qp;
 wire logic [7:0]     err_syn   = dut.u_core.m_resp_err_code;
 
 string  dir;
-integer seed, gap, bp, r, f_tx, f_send, f_cpl, f_ack, f_err, rc;
+integer seed, gap, igap, bp, r, f_tx, f_send, f_cpl, f_ack, f_err, rc;
 int     nframes = 0;
 bit     cfg_done = 0, rx_done = 0;
 
@@ -147,6 +151,7 @@ initial begin
     if (!$value$plusargs("dir=%s", dir)) dir = ".";
     if (!$value$plusargs("seed=%d", seed)) seed = 1;
     if (!$value$plusargs("gap=%d", gap)) gap = 20;
+    if (!$value$plusargs("igap=%d", igap)) igap = 0;
     if (!$value$plusargs("bp=%d", bp)) bp = 20;
     if (!$value$plusargs("read_cont=%d", rc)) rc = 1;
     r = $urandom(seed);
@@ -204,7 +209,8 @@ always @(posedge clk) begin
     else still <= still + 1;
 end
 
-// RX frames (CMAC: no back-pressure; PAUSE honoured between frames)
+// RX frames (MAC: no back-pressure; PAUSE honoured between frames; tvalid gaps inside frames
+// with +igap)
 int n_paused = 0;
 initial begin
     integer fd, rl, rn, sy;
@@ -229,11 +235,13 @@ initial begin
                 repeat (4) @(posedge clk);
             end
             while (urand100() < gap) begin rx_tvalid <= 1'b0; @(posedge clk); end
-            if (pause_req[8]) n_paused++;
-            while (pause_req[8]) begin rx_tvalid <= 1'b0; @(posedge clk); end
+            if (pause_req) n_paused++;
+            while (pause_req) begin rx_tvalid <= 1'b0; @(posedge clk); end
+        end else begin
+            while (urand100() < igap) begin rx_tvalid <= 1'b0; @(posedge clk); end
         end
-        rx_tdata <= d; rx_tlast <= rl[0]; rx_tvalid <= 1'b1;
-        for (int i = 0; i < 64; i++) rx_tkeep[i] <= (i < rn);
+        rx_tdata <= MAC_WIDTH'(d); rx_tlast <= rl[0]; rx_tvalid <= 1'b1;
+        for (int i = 0; i < KB; i++) rx_tkeep[i] <= (i < rn);
         @(posedge clk);
         first = rl[0];
         if (rl[0]) nframes++;
@@ -250,7 +258,7 @@ always @(posedge clk) begin
         send_tready <= (urand100() >= bp);
         rc_tready   <= (urand100() >= bp);
     end
-    if (tx_tvalid && tx_tready) $fdisplay(f_tx, "%0d %0d %0128h 0", tx_tlast, popc(tx_tkeep), tx_tdata);
+    if (tx_tvalid && tx_tready) $fdisplay(f_tx, "%0d %0d %0128h 0", tx_tlast, popc(64'(tx_tkeep)), 512'(tx_tdata));
     if (send_tvalid && send_tready)
         $fdisplay(f_send, "%0d %0d %0128h %0d %0d %0d", send_tlast, popc(send_tkeep), send_tdata, send_tuser[7:0],
                   send_tuser[8], send_tuser[9]);

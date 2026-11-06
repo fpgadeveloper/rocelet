@@ -14,7 +14,7 @@ loses and what each host NIC requires); this page is its summary.
 | **RC requester** (FPGA -> host): RDMA WRITE, WRITE with immediate, SEND, SEND with immediate | single- and multi-packet messages (FIRST / MIDDLE / LAST / ONLY), PSN per packet, AckReq on the last packet of every message and every `ACKREQ_N` packets, SE on request |
 | ACK / NAK processing | coalesced ACKs retire every WR they cover; NAK sequence error -> go-back-N; RNR NAK -> wait (decoded from the AETH timer code, clamped) and retry, never treated as an ACK; fatal NAKs (invalid request, remote access, remote operational) fail the QP |
 | Retransmission | go-back-N from a 256 KB on-chip payload ring (`RTX_MODE` "RING", live sources) or by re-reading memory ("REREAD"); "LOSSY" lossy resume (experimental) |
-| ACK timeout, retry and RNR retry counters | microsecond timer, IBTA retry_cnt / rnr_retry semantics (rnr_retry 7 = for ever); ACK timeouts held while `link_up` is low and for `LINK_GRACE` after (v0.2) |
+| ACK timeout, retry and RNR retry counters | microsecond timer, IBTA retry_cnt / rnr_retry semantics (rnr_retry 7 = for ever); ACK timeouts held while `link_up` is low and for `LINK_GRACE` after |
 | **UC requester** (per QP) | standard UC FIRST / MIDDLE / LAST / ONLY |
 | **HSB mode** (per QP) | UC WRITE Only per packet with its own RETH, WRITE Only with Immediate {PSN[19:0], buffer[11:0]}, metadata PSN patch: the NVIDIA Holoscan Sensor Bridge data plane ([hsb.md](hsb.md)) |
 | **RC responder** (host -> FPGA): RDMA WRITE, WRITE with immediate, SEND, SEND with immediate | WRITE into FPGA memory (cut-through, committed on a good ICRC); SEND to a stream with a per-packet commit/discard verdict; receive completions {QP, opcode, immediate, message length} |
@@ -24,7 +24,7 @@ loses and what each host NIC requires); this page is its summary.
 | QP state | RESET (commit) / RTS / ERROR per QP; error causes captured; per-QP reset by a configuration commit (no bitstream reload); a forced error flushes a QP's work requests |
 | Memory windows | `NUM_MR` windows {VA, length, local address, R_Key, read/write}, selected by the low R_Key bits with a full 32-bit key compare |
 | QPs | `NUM_QP` (16 default, 1-256), local QPN = `QPN_BASE` + index |
-| Path MTU | 256-4096 per QP; WRITE and SEND at line rate at PMTU >= 1024 (the responder reaches 67 % / 89 % of 100 Gb/s at 256 / 512); host READs of FPGA memory measured 81 Gb/s at PMTU 1024 and 95.1 Gb/s at 2048 ([host-setup.md](host-setup.md) section 5) |
+| Path MTU | 256-4096 per QP. At 100G: WRITE and SEND at line rate at PMTU >= 1024 (the responder reaches 67 % / 89 % of 100 Gb/s at 256 / 512); host READs of FPGA memory measured 81 Gb/s at PMTU 1024 and 95.1 Gb/s at 2048 ([host-setup.md](host-setup.md) section 5). At 40G: host READs of FPGA memory at line rate at PMTU 4096, 1024 and 512 (38.7, 37.0 and 34.4 Gb/s of payload; PMTU 256 not measured). Every rate: [throughput.md](throughput.md) |
 
 ### Wire format and network
 
@@ -39,6 +39,7 @@ loses and what each host NIC requires); this page is its summary.
 | 802.3x PAUSE | honoured (TX gated at frame boundaries) and requested from the RX FIFO level |
 | ARP / ICMP | ARP requests (unicast and broadcast) and ICMP echo answered: hosts need the FPGA's MAC to bring a QP to RTR, and a driver with its own hardware ARP table may kill a QP whose neighbour entry goes stale |
 | Other traffic | non-RoCE frames to / from a CPU or NIC stack (e.g. the HSB control plane) |
+| MAC width | 512-bit engine; MAC AXI-Stream of 512, 256, 128 or 64 bits (`MAC_WIDTH`) through built-in width converters, PAUSE timing set by `LINK_GBPS`: 100G (512 bits), 40G (256 bits) and 10G (64 bits) validated on hardware, 25G clocking checked in simulation |
 
 ### Interop checklist (what every frame obeys)
 
@@ -70,11 +71,13 @@ checksum is covered by the Ethernet FCS, not by the ICRC), with CE-marked packet
 | Unaligned FPGA buffers | VA and length 64-byte aligned (except the last packet); byte-unaligned buffers cost about 5k LUT |
 | The CMAC IP's AXI-Lite statistics block | fabric counters in rocelet instead (FCS errors, RS-FEC, pause, TX underrun) |
 | Per-QP statistics counters | the counters are per port; per-QP error causes are kept |
-| Narrow datapaths (10/25/40G) | v2 |
 
 ## Host NICs
 
-The release (v0.2.2) is validated against an NVIDIA ConnectX-6 Dx (mlx5) in all three roles,
-including READ re-issue after response loss (continuation answer required) and link loss.
+rocelet is validated against an NVIDIA ConnectX-6 Dx (mlx5) in all three roles: at 100G on a
+KCU116 with the AMD CMAC (v0.2.2, including READ re-issue after response loss, where the
+continuation answer is required, and link loss; v0.3.0 at 512 bits passes the same simulation
+regression and builds the KCU116 target), and at 40G and 10G on a ZCU106 with the open-source
+omac MACs (v0.3.0, including 802.3x PAUSE in both directions at 40G).
 The host-side facts are in [host-setup.md](host-setup.md). UC (and so the HSB mode) is accepted only by NVIDIA (and rxe,
 MANA); Broadcom bnxt_re and the other RDMA drivers reject UC QPs.

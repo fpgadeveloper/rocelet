@@ -50,6 +50,23 @@ TESTS = [
      'AXI4 master: 4 KB splits, out-of-order IDs, READ-after-WRITE ordering'),
     ('vlan', 'test_vlan.py', [], [],
      'VLAN tag insert / strip, 3000 random frames'),
+    # v0.3: narrow MACs (width converters inside rocelet_top) and link-speed PAUSE timing
+    ('mac_width', 'test_mac_width.py', ['500', '1'], ['200', '1'],
+     'MAC width converters 64 / 128 / 256 bits: gaps, partial last beats, bad-frame flag, abort, no TX gap, full rate'),
+    ('pause', 'test_pause.py', [], [],
+     '802.3x PAUSE hold at 10G / 25G / 40G / 100G clocks (PAUSE_QCLK), XON, level mode, CAPS / CLK_KHZ'),
+    ('resp_top_w256', 'test_resp.py', ['--top', '--mac-width', '256', '300', '5'],
+     ['--top', '--mac-width', '256', '120', '5'],
+     'resp_top with a 256-bit MAC (40G): MAC-width beats, partial last beats, tvalid gaps inside frames'),
+    ('resp_top_w64', 'test_resp.py', ['--top', '--mac-width', '64', '300', '5'],
+     ['--top', '--mac-width', '64', '120', '5'],
+     'resp_top with a 64-bit MAC (10G)'),
+    ('pair_top_w256', 'test_pair.py', ['--top', '--mac-width', '256', '100', '5', '50'],
+     ['--top', '--mac-width', '256', '40', '5', '50'],
+     'pair_top over a 256-bit MAC link (one MAC beat per clock, RX gaps), PAUSE as the MAC hold level'),
+    ('pair_top_w64', 'test_pair.py', ['--top', '--mac-width', '64', '100', '5', '50'],
+     ['--top', '--mac-width', '64', '40', '5', '50'],
+     'pair_top over a 64-bit MAC link'),
 ]
 
 

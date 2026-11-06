@@ -2,7 +2,7 @@
 //
 // rocelet_tx_builder - RoCE v2 packetiser: turns a packet descriptor plus its payload
 // into an Ethernet / IPv4 (or IPv6) / UDP / BTH [/ RETH | AETH] [/ ImmDt] frame
-// at 512 bits. The ICRC is appended downstream (rocelet_icrc_tx), the FCS by the CMAC.
+// at 512 bits. The ICRC is appended downstream (rocelet_icrc_tx), the FCS by the MAC.
 //
 // One builder serves every TX packet source of the engine (requester data, ACK
 // generator, READ responses) through its descriptor port, so the per-QP

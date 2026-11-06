@@ -18,7 +18,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 
-VERSION = (0, 2, 2)
+VERSION = (0, 3, 0)
 
 # ---------------------------------------------------------------------------
 # registers: (offset, name, access, reset, description, [fields])
@@ -48,12 +48,21 @@ REGS = [
     (0x014, 'BUILD3', 'RO', None, 'Build parameters.', [
         (15, 0, 'RX_FIFO_DEPTH', 'RX frame FIFO, 64-byte beats'),
         (31, 16, 'TX_FIFO_DEPTH', 'TX frame FIFO, 64-byte beats')]),
+    (0x018, 'CAPS', 'RO', None, 'MAC-side build parameters (since 0.3.0; reads 0 on older builds). With ID, '
+                               'VERSION, BUILD0-3 and CLK_KHZ this is the capability block firmware and host '
+                               'tools read to discover the build.', [
+        (15, 0, 'MAC_WIDTH', 'MAC AXI-Stream width in bits (64, 128, 256 or 512; the engine is 512 bits '
+                             'inside, narrower MACs go through the built-in width converters)'),
+        (23, 16, 'LINK_GBPS', 'link speed the build was made for, Gb/s (sets the PAUSE_QCLK reset value)')]),
+    (0x01C, 'CLK_KHZ', 'RO', None, 'Nominal engine clock (the MAC user clock) in kHz (CLK_KHZ parameter, or '
+                                  'CLK_MHZ x 1000 when it is 0), e.g. 322266 or 156250 (since 0.3.0).', [
+        (23, 0, 'KHZ', '')]),
 
     # ---- global control ----
     (0x020, 'CTRL', 'RW', None, 'Global control. Reset value 0x1AA6 + 8 x READ_CONT_DEFAULT (0x1AAE).', [
         (0, 0, 'RESET', 'hold the engine and the MAC glue in reset (register values are kept). Reset value 0'),
-        (1, 1, 'RX_EN', 'accept frames from the CMAC. Reset value 1'),
-        (2, 2, 'TX_EN', 'start frames towards the CMAC. Reset value 1'),
+        (1, 1, 'RX_EN', 'accept frames from the MAC. Reset value 1'),
+        (2, 2, 'TX_EN', 'start frames towards the MAC. Reset value 1'),
         (3, 3, 'READ_CONT', 'answer a partial duplicate READ as a continuation (MIDDLE/LAST) of the original '
                             'response instead of a new FIRST/ONLY response. Reset value READ_CONT_DEFAULT'),
         (4, 4, 'LOSS_FATAL', 'requester: a NAK-sequence or a timeout puts the QP into the error state instead '
@@ -66,15 +75,18 @@ REGS = [
                               'other-traffic port; 0 = drop them. Reset value 0'),
         (9, 9, 'PAUSE_RX_EN', 'honour received 802.3x PAUSE frames (no new frame starts while paused). '
                               'Reset value 1'),
-        (10, 10, 'PAUSE_RX_LEVEL', 'also hold TX while the CMAC holds stat_rx_pause_req[8]. Reset value 0'),
-        (11, 11, 'PAUSE_TX_EN', 'request 802.3x PAUSE (ctl_tx_pause_req[8]) from the RX FIFO level. '
+        (10, 10, 'PAUSE_RX_LEVEL', 'also hold TX while the MAC holds mac_pause_hold (a MAC that times the '
+                                   'received quanta itself, e.g. omac; the CMAC\'s stat_rx_pause_req[8]). '
+                                   'Reset value 0'),
+        (11, 11, 'PAUSE_TX_EN', 'request 802.3x PAUSE (mac_pause_req) from the RX FIFO level. '
                                 'Reset value 1'),
         (12, 12, 'IRQ_EN', 'drive irq while a QP error is latched (STATUS.ERR). Reset value 1')]),
     (0x024, 'STATUS', 'RO', None, 'Global status.', [
         (0, 0, 'IN_RESET', 'engine held in reset'),
-        (1, 1, 'MAC_ALIGNED', 'mac_rx_aligned input'),
+        (1, 1, 'MAC_RX_STATUS', 'mac_rx_status input (the MAC\'s RX is aligned / block-locked; '
+                                  'MAC_ALIGNED before 0.3.0)'),
         (2, 2, 'PAUSE_GATE', 'TX held by a received PAUSE'),
-        (3, 3, 'PAUSE_REQ', 'PAUSE requested from the CMAC'),
+        (3, 3, 'PAUSE_REQ', 'PAUSE requested from the MAC (mac_pause_req)'),
         (4, 4, 'ERR', 'a QP error is latched (see QP_ERR_MAP, LAST_REQ_ERR, LAST_RESP_ERR); cleared by CMD.CLR_ERR'),
         (5, 5, 'LINK_UP', 'link_up input (synchronised)'),
         (6, 6, 'TIMER_HOLD', 'requester ACK timeouts held: link_up low, or LINK_GRACE running after it rose '
@@ -108,8 +120,9 @@ REGS = [
         (2, 0, 'RETRY_CNT', 'retransmissions after a timeout or NAK-sequence error before the QP fails. Reset 7'),
         (6, 4, 'RNR_RETRY', 'RNR NAKs before the QP fails; 7 = retry for ever. Reset 7')]),
     (0x068, 'PACE_RATE', 'RW', 0, 'Requester rate limit (token bucket over all QPs): credit added per clock, in '
-                                  '1/256 byte (wire bytes: payload + 98). 0 = no limit. 100 Gb/s at 322.27 MHz = '
-                                  '9930; 50 Gb/s = 4965.', [
+                                  '1/256 byte (wire bytes: payload + 98). 0 = no limit. INC = rate [b/s] / 8 / '
+                                  'f_clk [Hz] x 256: 100 Gb/s at 322.27 MHz = 9930, 50 Gb/s = 4965; 40 Gb/s at '
+                                  '156.25 MHz = 8192, 10 Gb/s = 2048.', [
         (19, 0, 'INC', '')]),
     (0x06C, 'PACE_BURST', 'RW', 16384, 'Requester rate limit: bucket size in bytes (the largest burst at line rate).', [
         (15, 0, 'BYTES', '')]),
@@ -121,6 +134,13 @@ REGS = [
                                          'timeouts are held anyway; an ACK that became overdue meanwhile times out at '
                                          'once when the hold ends.', [
         (23, 0, 'TICKS', '')]),
+    (0x074, 'PAUSE_QCLK', 'RW', None, 'Length of one received 802.3x PAUSE quantum (512 bit times) in engine clocks '
+                                      'x 256, for the quanta a MAC reports with mac_pause_valid / '
+                                      'mac_pause_quanta (since 0.3.0; 0.2.x used the 100G value at any speed). '
+                                      'Reset value ceil(131072 x CLK_KHZ / (LINK_GBPS x 10^6)): 423 at 100G / '
+                                      '322.27 MHz, 512 at 40G / 156.25 MHz, 2048 at 10G / 156.25 MHz. Firmware '
+                                      'rewrites it when one bitstream runs the link at another speed.', [
+        (19, 0, 'QCLK', 'clocks per quantum x 256: 12.8 fixed point (12 integer, 8 fraction bits)')]),
 
     # ---- QP configuration (staged; QP_COMMIT applies) ----
     (0x100, 'QP_INDEX', 'RW', 0, 'QP index for QP_COMMIT and QP_STATUS.', []),
@@ -191,8 +211,8 @@ REGS += [
 
 # ---- counters: 32-bit, wrapping, cleared by CMD.CLR_COUNTERS ----
 COUNTERS = [
-    ('RX_FRAMES', 'frames received from the CMAC (each tlast)'),
-    ('RX_FCS_ERR', 'frames the CMAC flagged bad (tuser), dropped'),
+    ('RX_FRAMES', 'frames received from the MAC (each tlast)'),
+    ('RX_FCS_ERR', 'frames the MAC flagged bad (tuser), dropped'),
     ('RX_FIFO_DROP', 'frames dropped by the RX FIFO (full, oversize, reset)'),
     ('RX_ROCE', 'frames to the engine (UDP port 4791)'),
     ('RX_ARP', 'ARP frames'),
@@ -216,14 +236,15 @@ COUNTERS = [
     ('RX_READ_CONT', 'duplicate READs answered as a continuation'),
     ('RX_RNR_SENT', 'RNR NAKs sent (send_rnr)'),
     ('RX_CPL', 'receive completions (SEND, WRITE with immediate)'),
-    ('TX_FRAMES', 'frames sent to the CMAC'),
+    ('TX_FRAMES', 'frames sent to the MAC'),
     ('TX_REQ', 'requester packets sent (incl. retransmissions)'),
     ('TX_ACK', 'ACKs sent'),
     ('TX_NAK', 'NAKs sent (sequence, RNR, fatal)'),
     ('TX_READ_RESP', 'READ response packets sent'),
     ('TX_ARP_ICMP', 'ARP / ICMP replies sent'),
     ('TX_OTHER', 'frames sent from the other-traffic port'),
-    ('TX_UNDERRUN', 'clock cycles with tvalid low inside a frame towards the CMAC (must stay 0)'),
+    ('TX_UNDERRUN', 'clock cycles with tvalid low inside a frame towards the MAC, on the 512-bit side '
+                    'or after the width converter (must stay 0)'),
     ('TX_VLAN_TAG', 'frames tagged'),
     ('REQ_WR', 'work requests accepted'),
     ('REQ_WC', 'work completions emitted'),
@@ -231,12 +252,13 @@ COUNTERS = [
     ('REQ_RTX', 'retransmission episodes (NAK-sequence, timeout or RNR wait)'),
     ('REQ_TIMEOUT', 'ACK timeouts'),
     ('REQ_REX', 'work requests re-issued by go-back-N'),
-    ('PAUSE_RX', 'PAUSE frames received (stat_rx_pause)'),
-    ('PAUSE_TX', 'PAUSE frames sent (stat_tx_pause)'),
-    ('PAUSE_GATE', 'PAUSE timer loads (received PAUSE in force)'),
+    ('PAUSE_RX', 'PAUSE frames received (mac_pause_rx_frame)'),
+    ('PAUSE_TX', 'PAUSE frames sent (mac_pause_tx_frame)'),
+    ('PAUSE_GATE', 'received PAUSE in force: timer loads (mac_pause_valid), plus rises of '
+                   'mac_pause_hold with CTRL.PAUSE_RX_LEVEL'),
     ('PAUSE_XOFF', 'PAUSE requests raised (RX FIFO above XOFF)'),
-    ('RSFEC_CORR', 'RS-FEC corrected codewords'),
-    ('RSFEC_UNCORR', 'RS-FEC uncorrectable codewords'),
+    ('RSFEC_CORR', 'FEC corrected codewords (mac_fec_corr_inc; RS-FEC on a 100G CMAC, else 0)'),
+    ('RSFEC_UNCORR', 'FEC uncorrectable codewords (mac_fec_uncorr_inc)'),
     ('AXI_WR_ERR', 'memory writes answered with BRESP != OKAY'),
     ('AXI_RD_ERR', 'memory read beats answered with RRESP != OKAY'),
     ('WR_DATA_ERR', 'work-request payload with tlast not on the last beat of the WR length'),
@@ -247,8 +269,8 @@ CNT_BASE = 0x200
 # 64-bit counters (read LO first: that latches HI)
 COUNTERS64 = [
     ('CYCLES', 'clock cycles since CMD.CLR_COUNTERS'),
-    ('RX_BYTES', 'bytes received from the CMAC'),
-    ('TX_BYTES', 'bytes sent to the CMAC'),
+    ('RX_BYTES', 'bytes received from the MAC'),
+    ('TX_BYTES', 'bytes sent to the MAC'),
 ]
 CNT64_BASE = 0x300
 
@@ -356,7 +378,7 @@ def gen_md():
          '*Generated by `regs/rocelet_regs.py` (version %d.%d.%d); do not edit by hand.*' % VERSION,
          '',
          'One AXI4-Lite slave (`s_axil_*`), 32-bit data, byte addresses, 64 KB window (offsets below',
-         '0x400 are decoded, the rest read 0). It runs in the engine clock (`clk`, the CMAC user clock):',
+         '0x400 are decoded, the rest read 0). It runs in the engine clock (`clk`, the MAC user clock):',
          'put a clock converter in front of it when the CPU is in another domain. Writes take effect',
          'in the clock after the write response; reads are answered in a fixed number of clocks.',
          'Unused bits read 0 and should be written 0.',

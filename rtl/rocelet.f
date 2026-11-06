@@ -29,6 +29,7 @@ rtl/mac/rocelet_rx_cls.sv
 rtl/mac/rocelet_arp_icmp.sv
 rtl/mac/rocelet_mac_arb.sv
 rtl/mac/rocelet_pause.sv
+rtl/mac/rocelet_mac_width.sv
 rtl/mac/rocelet_mac.sv
 rtl/mem/rocelet_axi_mem.sv
 rtl/ctl/rocelet_regs.sv

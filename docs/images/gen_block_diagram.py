@@ -13,7 +13,8 @@ Generate the diagrams for the rocelet docs.
 
 Conventions shared with the Opsero reference-design diagrams
 (fpga-drive-nvme-offload/docs/source/images/gen_block_diagram.py): same palette,
-helpers and fonts, left-to-right layout with the 100G CMAC on the left and the
+helpers and fonts, left-to-right layout with the MAC (100G CMAC, or a 40G / 10G MAC at
+MAC_WIDTH 256 / 128 / 64) on the left and the
 user ports on the right; lavender = soft logic, cream = hard blocks, blue arrows =
 register access and configuration, green arrows = data into or out of memory
 (m_axi), pale green arrows = AXI4-Stream, orange = the clock, dark-blue thin =
@@ -195,7 +196,7 @@ def legend(ax, x, y):
     """Arrow-colour key of the rocelet block diagram (two rows)."""
     col = [x, x + 50.0, x + 102.0]
     keys = [
-        (0, 0, "block", C_USER_FILL, C_USER_EDGE, "AXI4-Stream (frames and payload 512 bit)"),
+        (0, 0, "block", C_USER_FILL, C_USER_EDGE, "AXI4-Stream (512 bit inside; MAC ports MAC_WIDTH bit)"),
         (1, 0, "block", C_AXARR_FILL, C_AXARR_EDGE, "memory data: m_axi (AXI4, 512 bit) and its paths"),
         (2, 0, "block", C_LINKARR_FILL, C_LINKARR_EDGE, "register access (AXI4-Lite) and configuration"),
         (0, 1, "line", C_CTRL_LINE, None, "descriptors and commands (WR, job, ACK / NAK, ...)"),
@@ -220,12 +221,12 @@ def draw_block():
     matplotlib.rcParams["savefig.dpi"] = DPI
 
     yR, yT = 105.0, 52.0              # centre lines of the RX and TX rows
-    ax.text(86.0, 130.5, "rocelet  —  RoCE v2 engine for one 100G port  (rocelet_top)",
+    ax.text(86.0, 130.5, "rocelet  —  RoCE v2 engine for one 100G / 40G / 10G port  (rocelet_top)",
             ha="center", va="center", fontsize=13.0, weight="bold", color=TXT)
 
     # ---- external: the CMAC -----------------------------------------------------
-    titled_box(ax, 1.0, 30.0, 7.0, 82.0, C_GT_FILL, C_GT_EDGE, "CMAC",
-               "100G\nEthernet\n(AMD\nhard\nblock)", title_fs=8.6, body_fs=7.0,
+    titled_box(ax, 1.0, 30.0, 7.0, 82.0, C_GT_FILL, C_GT_EDGE, "MAC",
+               "MAC_WIDTH\n\n100G\nCMAC\n(512 b)\n\nor 40G /\n10G MAC\n(256 /\n128 /\n64 b)", title_fs=8.6, body_fs=7.0,
                title_dy=2.4, lw=1.3)
 
     # ---- rocelet_top container --------------------------------------------------
@@ -234,7 +235,7 @@ def draw_block():
                                fc=C_FAB_FILL, ec=C_FAB_EDGE, lw=1.3, zorder=1))
     ptext(ax, top_x0 + 1.2, top_y1 - 1.9, "rocelet_top", fs=10.0, weight="bold")
     clk_tag(ax, 56.0, top_y1 - 1.9,
-            "clk = CMAC user clock (gt_txusrclk2), 322.265625 MHz:  one clock domain, no CDC",
+            "clk = MAC user clock (CMAC 322.27 MHz, 40G / 10G MAC 156.25 MHz):  one clock domain, no CDC",
             fs=7.4, ha="left")
 
     # ---- rocelet_mac -------------------------------------------------------------
@@ -253,7 +254,7 @@ def draw_block():
                "classifier:\nUDP 4791\n→ engine", title_fs=8.0, body_fs=7.0,
                title_dy=2.0, z=3)
     harrow(ax, 8.0, 19.0, yR, "", C_USER_FILL, C_USER_EDGE, bh=0.9, hh=1.7, hl=1.2)
-    ptext(ax, 11.5, yR + 3.0, "s_axis_rx_*", ha="center")
+    ptext(ax, 11.5, yR + 3.0, "s_axis_rx_*\n(width conv.)", ha="center")
     ptext(ax, 11.5, yR - 3.0, "no tready", ha="center", color=C_WARN)
     harrow(ax, 30.0, 33.0, yR, "", C_USER_FILL, C_USER_EDGE, bh=0.8, hh=1.5, hl=1.0, z=4)
     harrow(ax, 42.0, 45.0, yR, "", C_USER_FILL, C_USER_EDGE, bh=0.8, hh=1.5, hl=1.0, z=4)
@@ -284,16 +285,16 @@ def draw_block():
     route(ax, [(24.5, 84.0), (24.5, 78.0)], C_THIN, lw=1.1, ms=7)
     ptext(ax, 25.2, 81.0, "gate", color=C_MUTED)
     route(ax, [(8.0, 90.5), (19.0, 90.5)], C_THIN, lw=1.1, ms=7)
-    ptext(ax, 12.3, 93.0, "stat_rx_\npause_*", ha="center", color=C_MUTED)
+    ptext(ax, 12.3, 93.0, "mac_\npause_*", ha="center", color=C_MUTED)
     route(ax, [(19.0, 86.0), (8.0, 86.0)], C_THIN, lw=1.1, ms=7)
-    ptext(ax, 12.3, 83.0, "ctl_tx_\npause_req", ha="center", color=C_MUTED)
+    ptext(ax, 12.3, 83.0, "mac_\npause_req", ha="center", color=C_MUTED)
     # TX arbiter
     titled_box(ax, 19.0, 30.0, 11.0, 48.0, C_MAC_FILL, C_MAC_EDGE, "mac_arb",
                "frame-atomic\narbiter\n\nfixed priority:\n1  ARP / ICMP\n2  other\n3  engine\n\n"
                "no new frame\nwhile a\nreceived\nPAUSE is in\nforce",
                title_fs=8.0, body_fs=7.0, title_dy=2.0, z=3)
     harrow(ax, 19.0, 8.0, yT, "", C_USER_FILL, C_USER_EDGE, bh=0.9, hh=1.7, hl=1.2)
-    ptext(ax, 13.5, yT + 3.0, "m_axis_tx_*", ha="center")
+    ptext(ax, 13.5, yT + 3.0, "m_axis_tx_*\n(width conv.)", ha="center")
     # engine TX into the MAC
     titled_box(ax, 45.0, 47.0, 11.0, 10.0, C_MAC_FILL, C_MAC_EDGE, "vlan_ins",
                "optional\ntag", title_fs=8.0, body_fs=7.0, title_dy=2.0, z=3)
@@ -428,7 +429,7 @@ def draw_block():
     # ---- rocelet_regs -------------------------------------------------------------
     titled_box(ax, 63.0, 13.5, 24.5, 22.0, C_CTRL_FILL, C_CTRL_EDGE, "rocelet_regs",
                "AXI4-Lite register file:\nQP and window tables,\nCTRL, status, counters\n\n"
-               "CMAC status, RS-FEC\nand PAUSE events in", title_fs=8.0, body_fs=7.0,
+               "MAC status, FEC\nand PAUSE events in", title_fs=8.0, body_fs=7.0,
                title_dy=2.0, z=3)
     vblock(ax, 75.0, 35.5, 42.0, C_LINKARR_FILL, C_LINKARR_EDGE, bw=0.8, hw=1.5, hl=1.1)
     ptext(ax, 77.0, 38.8, "configuration / status", color=C_CTRL_LINE)

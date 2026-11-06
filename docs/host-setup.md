@@ -1,10 +1,11 @@
 # Host setup and host rules
 
 What a Linux host with a hardware RoCE v2 NIC needs to talk to a rocelet FPGA over a point-to-
-point 100G link, and the host-side rules learned on the bench with the qsfp28-fmc-rocelet
-reference design (KCU116 + Opsero OP120). The validated host NIC is an **NVIDIA ConnectX-6
-Dx** (firmware 22.43.2566, inbox `mlx5` and rdma-core 50, Ubuntu 24.04, Linux 6.8, 3 m QSFP28
-DAC; rocelet v0.1 to v0.2.2, 2026-10-30/31). Where a rule depends on the NIC, the ConnectX-6 Dx
+point 100G, 40G or 10G link, and the host-side rules learned on the bench with the
+qsfp28-fmc-rocelet reference design on the Opsero 2x QSFP28 FMC (OP120): 100G on a KCU116, 40G
+and 10G on a ZCU106. The validated host NIC is an **NVIDIA ConnectX-6 Dx** (firmware
+22.43.2566, inbox `mlx5` and rdma-core 50, Ubuntu 24.04, Linux 6.8, 3 m QSFP28 DAC). Figures are
+measured at 100G unless they say otherwise. Where a rule depends on the NIC, the ConnectX-6 Dx
 behaviour is the measured one; notes on "some NICs" or "some drivers" say what to check on a
 host with another NIC. Items marked *unverified* come from driver sources or published
 measurements and were not checked on the bench.
@@ -14,11 +15,12 @@ measurements and were not checked on the bench.
 | Item | Setting |
 |---|---|
 | Cabling | point to point (DAC, AOC or optics), no switch needed |
-| Speed / auto-negotiation | 100GBASE-*4, **forced**: the FPGA's CMAC does no auto-negotiation. A ConnectX-6 Dx starts with clause-73 auto-negotiation and reports "No partner detected" until it is off: `ethtool -s <if> speed 100000 duplex full autoneg off` (make it persistent in the network configuration, for example a systemd `.link` file; mlx5 rejects `lanes 4`). |
+| Speed / auto-negotiation | 100G: 100GBASE-*4, **forced**: the FPGA's CMAC does no auto-negotiation. A ConnectX-6 Dx starts with clause-73 auto-negotiation and reports "No partner detected" until it is off: `ethtool -s <if> speed 100000 duplex full autoneg off` (make it persistent in the network configuration, for example a systemd `.link` file; mlx5 rejects `lanes 4`). |
 | FEC | **RS-FEC (Clause 91) on at both ends.** ConnectX-6 Dx: FEC `Auto` resolves to RS(528,514) against the FPGA with no change on either side (`ethtool --show-fec <if>`); on the 3 m DAC 0 uncorrected codewords on a quiet link, the FPGA corrected about one codeword per second. A NIC whose FEC does not resolve to RS-FEC by itself needs it set by hand, the same at both ends; some drivers accept the change only with the port down: `ip link set <if> down; ethtool --set-fec <if> encoding rs; ip link set <if> up`. |
 | MTU | **4200** for PMTU 4096 (`ip link set dev <if> mtu 4200`). The largest IPv4 RoCE frame is 4160 bytes. mlx5's active_mtu is the largest IB MTU not above the netdev MTU - 96 (the ConnectX-6 Dx reports 4096 at MTU 4200); other drivers may compare against the netdev MTU itself. MTU 1500 gives PMTU 1024. |
-| Pause | rocelet honours received 802.3x PAUSE and sends PAUSE from its RX FIFO level. ConnectX: link pause is **on** by default (rx and tx); the FPGA's PAUSE frames were honoured with no host change (24,000,193 PAUSE frames sent by the FPGA, all counted by the ConnectX-6 in `rx_pause_ctrl_phy`, no drop). PAUSE from the ConnectX-6 to the FPGA was not tested as such. Some drivers have link flow control **off** by default: check with `ethtool -a <if>` and turn it on with `ethtool -A <if> rx on tx on` (the port may relink for a few seconds). |
+| Pause | rocelet honours received 802.3x PAUSE and sends PAUSE from its RX FIFO level. ConnectX: link pause is **on** by default (rx and tx); the FPGA's PAUSE frames were honoured with no host change (24,000,193 PAUSE frames sent by the FPGA, all counted by the ConnectX-6 in `rx_pause_ctrl_phy`, no drop). PAUSE from the ConnectX-6 Dx to the FPGA was tested at 40G: the host's PAUSE frames held the FPGA's WRITE with immediate from 38.78 to 23.89 Gb/s, 0 lost. Some drivers have link flow control **off** by default: check with `ethtool -a <if>` and turn it on with `ethtool -A <if> rx on tx on` (the port may relink for a few seconds). |
 | VLAN / DCB | rocelet strips VID-0 priority tags; it does not use other VLANs. A ConnectX-6 Dx accepts VID-0 priority-tagged RoCE frames on an untagged QP (`CTRL.VLAN_TX_TAG` = 1 with PCP 3: received on `rx_prio3`, READ responses at 96.61 Gb/s) and sends its own ACKs untagged. Some NICs tag their RoCE frames with VID 0 when DCB has more than one traffic class (rocelet strips the tag; keep one class point to point), and some drop VID-0-tagged RoCE frames they receive (the frames never reach the QP, yet may still be counted in the NIC's IP octet counters): **keep `CTRL.VLAN_TX_TAG` = 0 (the reset value) unless the host NIC is known to accept them.** |
+| 40G / 10G (rocelet v0.3 with a 40GBASE-R4 or 10GBASE-R MAC) | Force the host port to the FPGA's speed with auto-negotiation off and **FEC off** (40GBASE-R4 has no RS-FEC; BASE-R FEC must match the MAC, normally off): `ethtool -s <if> speed 40000 duplex full autoneg off` (or `speed 10000`), `ethtool --set-fec <if> encoding off`, MTU 4200 as at 100G. Validated with a ConnectX-6 Dx (40000baseCR4 and 10000baseCR on a 3 m QSFP28 DAC, with the omac MACs on a ZCU106). Host READ reaches 40G line rate down to PMTU 512 ([](throughput.md)). Link pause (802.3x) stays on: the ConnectX-6 Dx honours the FPGA's PAUSE frames and the FPGA honours the host's. |
 | FPGA address | the FPGA answers ARP (unicast and broadcast) and ICMP echo, so `ping` works and the kernel resolves its MAC when a QP goes to RTR (1 s timeout, else `ETIMEDOUT`). |
 
 ## 2. Neighbour entry
@@ -76,13 +78,12 @@ VA, R_Key and size, plus the FPGA's READ depth. Then, on the host:
 ## 5. RDMA READ of FPGA memory
 
 - READ depth: see section 3. More *new* READs in flight than the FPGA's depth is a NAK and a
-  host QP error. Re-issued (duplicate) READs do not count: since v0.2 rocelet re-executes them
-  without taking a READ slot. After a READ-response loss a ConnectX-6 Dx re-issues the partial
-  READ and every later outstanding READ within microseconds (duplicate READs about 5.7 x the
-  lost responses); with v0.2.0, 13.0 M READs with 15.4 k lost responses at `max_rd_atomic` 16,
-  12 and 10 completed with no NAK and correct data (92.56-94.22 Gb/s at 200 ppm loss and
-  `max_rd_atomic` 16). (v0.1 counted the duplicates, and the ConnectX-6 Dx with `max_rd_atomic`
-  16 got NAK 0x61 "invalid request" on a later READ; the workaround was `max_rd_atomic` 8.)
+  host QP error. Re-issued (duplicate) READs do not count: rocelet re-executes them without
+  taking a READ slot. After a READ-response loss a ConnectX-6 Dx re-issues the partial READ and
+  every later outstanding READ within microseconds (duplicate READs about 5.7 x the lost
+  responses); 13.0 M READs with 15.4 k lost responses at `max_rd_atomic` 16, 12 and 10
+  completed with no NAK and correct data (92.56-94.22 Gb/s at 200 ppm loss and
+  `max_rd_atomic` 16).
 - **Partial READ re-issue**: after losing a READ RESPONSE, a host re-issues from the lost PSN.
   The ConnectX-6 Dx re-issues a lost MIDDLE after 4.85-4.90 µs (gap detected,
   `implied_nak_seq_err` +1), a lost LAST after its adaptive timeout (96.6 ms and 21.6 ms in two
@@ -92,8 +93,9 @@ VA, R_Key and size, plus the FPGA's READ depth. Then, on the host:
   error. Some NICs re-issue a lost READ response only after their READ retransmission timeout
   (tens of milliseconds) rather than on the gap. IBTA and rxe answer with a new FIRST/ONLY
   response; rxe accepts both.
-- Rate (ConnectX-6 Dx, `max_rd_atomic` 16): 96.59-96.79 Gb/s at PMTU 4096, 95.10 at 2048,
-  81 at 1024 (about 9.9 M READ responses per second; not investigated).
+- Rate (ConnectX-6 Dx, `max_rd_atomic` 16): at 100G 96.59-96.79 Gb/s at PMTU 4096, 95.10 at
+  2048, 81 at 1024 (about 9.9 M READ responses per second); at 40G line rate at PMTU 4096, 1024
+  and 512 (38.73, 37.03 and 34.43 Gb/s of payload; [](throughput.md)).
 
 ## 6. Counters and observability
 
@@ -105,8 +107,7 @@ VA, R_Key and size, plus the FPGA's READ depth. Then, on the host:
 
 ## 7. ConnectX-6 Dx behaviour: confirmed on the bench, and what is unverified
 
-Confirmed with the qsfp28-fmc-rocelet design against the ConnectX-6 Dx (sessions of 2026-10-30
-and 2026-10-31, rocelet v0.1 to v0.2.2, and the Holoscan Sensor Bridge sessions of 2026-10-31):
+Confirmed with the qsfp28-fmc-rocelet design against the ConnectX-6 Dx (at 100G unless noted):
 
 - **Frame acceptance, MigReq (confirmed).** rocelet's RC frames with MigReq = 1 are accepted (0
   NIC error counters in every clean run); the ConnectX-6's own ACKs carry MigReq 1, ToS 0x02
@@ -125,8 +126,8 @@ and 2026-10-31, rocelet v0.1 to v0.2.2, and the Holoscan Sensor Bridge sessions 
   injected drops exactly; a lost READ MIDDLE is re-issued in under 5 µs (section 5).
 - **Wrong R_Key (confirmed).** NAK remote access error (AETH 0x62): about 1.2-1.4 ms after a
   plain WRITE, 1.83 ms after a 4 KB WRITE with immediate; with a budget of 8 x 1 ms or more
-  (default 8 x 5 ms) the FPGA QP reports requester error 0x62 (with the 200 µs ACK timeout the
-  design firmware set at the time, 8 x 200 µs, it timed out first, 0xFF). The host's QP goes to error.
+  (default 8 x 5 ms) the FPGA QP reports requester error 0x62 (with a shorter budget, e.g. 8 x
+  200 µs, it times out first, 0xFF). The host's QP goes to error.
 - **READ re-issue and continuation (confirmed)**: section 5.
 - **RNR (confirmed)**: `min_rnr_timer` honoured, multi-packet WRITE with immediate recovers
   (section 4).
@@ -139,14 +140,14 @@ and 2026-10-31, rocelet v0.1 to v0.2.2, and the Holoscan Sensor Bridge sessions 
 - **UC (confirmed).** HSB 3.0.0's RoCE receiver opened a UC QP on the ConnectX-6 Dx and received
   rocelet's UC-HSB frames into GPU memory (up to 80 Gb/s on the test host). *From sources:* rxe
   and MANA accept UC; other RDMA drivers, bnxt_re among them, reject it (EOPNOTSUPP).
-- **Pause (confirmed)**: section 1.
+- **Pause (confirmed)**: both directions, section 1.
 - **ACK round trip and the retransmit ring (confirmed).** 256 KB covers 21 µs at 100 Gb/s; a
   smaller ring is still correct but caps throughput at ring / RTT. Under PCIe back pressure (a
   GPU ring on the Lenovo P520) the ConnectX-6 delays its ACKs (average WR to completion 9.35 µs
   against 5.08 µs into host memory) with 0 retransmissions. A 256 KB message fills the 256 KB
   ring, so one message is in flight: 58.50 Gb/s, against 97.69 Gb/s with 128 KB messages.
-- **Link loss (confirmed)**: a 35.6 s DAC pull (v0.2.0) and a 14.9 s pull at the v0.2.2
-  defaults, 1 timeout each, nothing lost; `KEEP_ETH_LINK_UP` and forced drops in section 10.
+- **Link loss (confirmed)**: a 14.9 s cable pull at the default settings and a 35.6 s DAC
+  pull, 1 timeout each, nothing lost; `KEEP_ETH_LINK_UP` and forced drops in section 10.
 - *Unverified:* **CNPs** may arrive after losses even without ECN marking ("slow restart");
   rocelet counts and drops them (no CNP was looked for on the bench). **Selective repeat**
   stays off without ECE negotiation; keep `selective_repeat_forced_en = 0`.
@@ -189,7 +190,7 @@ LOCAL_WRITE | REMOTE_WRITE | REMOTE_READ)`. Proven with rocelet on a Lenovo P520
 | Topology | NIC and GPU on CPU lanes; ideally behind one PCIe switch (`nvidia-smi topo -m`: `PIX` / `PXB`). `NODE` (different root ports of one CPU) works but caps the rate (below) |
 | Completion signal | WRITE with immediate (or plain WRITE checked after the run). Polling GPU memory for a "data then flag" pattern is not safe by default |
 
-**IOVA: 0 (decision 2026-10-30).** `ibv_reg_dmabuf_mr` takes the address the peer will use. rocelet_host
+**IOVA: 0.** `ibv_reg_dmabuf_mr` takes the address the peer will use. rocelet_host
 registers the ring at **IOVA 0** by default, the Holoscan Sensor Bridge host convention (HSB's
 `RoceReceiver` does the same), so the RLHM `va=` is the byte offset in the ring and an HSB-style
 data plane needs no translation. `--gpu-iova dev` registers at the GPU device address instead (`va=`
@@ -233,47 +234,40 @@ ring). A host with NIC and GPU behind one switch, or a Gen4/5 GPU slot, lifts th
 | Command | What it shows | P520 at the GPU limit |
 |---|---|---|
 | `nvidia-smi dmon -s t -i 0` | `rxpci` / `txpci` MB/s of the GPU link | `rxpci` ~1.38x the payload rate (~14 GB/s at 81 Gb/s) |
-| `ethtool -S enp179s0f0np0 \| grep outbound_pci_stalled_wr` (every few seconds) | `outbound_pci_stalled_wr`: % of the last second the NIC had posted writes it could not send (no PCIe credits) | 72 % into the GPU; 0 into host memory |
+| `ethtool -S <if> \| grep outbound_pci_stalled_wr` (every few seconds) | `outbound_pci_stalled_wr`: % of the last second the NIC had posted writes it could not send (no PCIe credits) | 72 % into the GPU; 0 into host memory |
 | `ethtool -S ... \| grep -E 'rx_discards_phy\|rx_out_of_buffer\|pause_ctrl'` | whether the NIC dropped or paused instead | 0 (it delays ACKs instead) |
 | rocelet's `WR_OUTSTANDING` register (a status, not a counter), in the qsfp28-fmc-rocelet design also the producer's "IQ waits" in the console's `hsb st` line; `nvidia-smi -q -d MEMORY` (BAR1) | the FPGA side of the back pressure: `WR_OUTSTANDING` sits at its maximum (the requester's window is full while the NIC delays its ACKs) and "IQ waits" counts the cycles the producer waited for the engine; BAR1 in use | BAR1 ~244 / 256 MiB with a 240 MiB ring |
 
 ## 10. Link flaps and cable pulls
 
-**FPGA as requester (FPGA -> host).** rocelet v0.2 holds its ACK timeouts while the link is
-down (`link_up` input = the CMAC's `stat_rx_aligned` with no local / remote fault, wired by the
-design) and for `LINK_GRACE` after it is back. Nothing is retransmitted by the timer meanwhile
+**FPGA as requester (FPGA -> host).** rocelet holds its ACK timeouts while the link is down
+(`link_up` input = the MAC's link state with no local / remote fault, wired by the design: CMAC
+`stat_rx_aligned & ~stat_rx_local_fault & ~stat_rx_remote_fault`, omac `stat_link_up`) and for
+`LINK_GRACE` after it is back. Nothing is retransmitted by the timer meanwhile
 and no retry is used; when the grace ends, every QP with an overdue ACK retransmits its window
 once (go-back-N) and continues. The outage a stream survives is then unlimited on the FPGA side
-(ConnectX-6 Dx: v0.2.0 survived a 35.6 s DAC pull and forced drops of 5-60 s, v0.2.2 at its
-defaults a 14.9 s pull, resumed 1.9 s after the ConnectX-6 carrier returned, with 1 timeout;
-0 lost / duplicate messages in every run). `CNT_LINK_DOWN`, `STATUS.LINK_UP` / `TIMER_HOLD` show what happened. See
+(ConnectX-6 Dx: a 14.9 s cable pull at the default settings resumed 1.9 s after the ConnectX-6
+carrier returned, with 1 timeout; a 35.6 s DAC pull and forced drops of 5-60 s were survived as
+well; 0 lost / duplicate messages in every run). `CNT_LINK_DOWN`, `STATUS.LINK_UP` / `TIMER_HOLD` show what happened. See
 [integration.md](integration.md) section 9.
 
-Why the defaults are `ACK_TIMEOUT` **5 ms** (since v0.2.1; v0.2.0 had 1 ms) and `LINK_GRACE`
-**2 s** (since v0.2.2; v0.2.0 had 3 s, v0.2.1 6 s):
+Why the defaults are `ACK_TIMEOUT` **5 ms** and `LINK_GRACE` **2 s**:
 
 - **5 ms ACK timeout.** A cable pull or a link partner power loss removes the FPGA's RX signal at
   once, so the hold covers it from the first microsecond. A host that takes its port down
   administratively (an ethtool speed / FEC change, `mlxlink`, possibly a driver reload or
-  firmware reset) is different: a ConnectX-6 with `KEEP_ETH_LINK_UP` set (the mlxconfig default)
-  stops answering **15-25 ms before** the FPGA loses alignment, because its PHY keeps sending a
-  valid signal for a while. Those milliseconds are counted as ordinary ACK timeouts; at 1 ms x 8
-  tries the QP died at the start of every such drop, at 5 ms (8 x 5 = 40 ms) it used 3-4 tries
-  and survived. If `link_up` includes the CMAC's remote fault, the hold may engage earlier, but
-  the 5 ms budget does not rely on it.
-- **2 s grace.** With `link_up` = aligned and no local / remote fault (the recommended wiring),
-  the hold engages within one ACK timeout of a drop, through the fault terms even when the host
-  goes silent before the FPGA loses alignment, and it ends only when the partner's own link is
-  up: the remote fault clears when the partner receives the FPGA's signal. On the ConnectX-6 Dx
-  the carrier returned 4.4-5.6 s after a CMAC reset from the FPGA, and rocelet's `link_up` rose
-  within 0.22 s of it, so the grace now starts at the partner's link-up, not at alignment. With
-  that, grace 0, 1 s and 3 s all survived 5 s forced drops at 5 ms x 8 (1, 1 and 5 of 8 tries
-  used; resume = partner carrier + grace). 2 s keeps margin for a partner whose port is up
-  before its RDMA stack answers. v0.2.1's 6 s was chosen when the grace still started at
-  alignment (`link_up` = `stat_rx_aligned` alone: the ConnectX-6 reported its link 2.4-2.9 s
-  after the FPGA, 5.1-5.4 s after an FPGA-side relink); with the fault terms it was ~6 s of dead
-  time per link loss. A design that drives `link_up` from `stat_rx_aligned` alone should raise
-  `LINK_GRACE` to ~6 s.
+  firmware reset) can stop answering **15-25 ms before** the FPGA loses alignment (a ConnectX-6
+  with `KEEP_ETH_LINK_UP` set, the mlxconfig default, keeps its PHY sending a valid signal for a
+  while); those milliseconds count as ordinary ACK timeouts, and the 8 x 5 ms = 40 ms budget
+  covers them (the QP used 3-4 tries; 8 x 1 ms does not survive such a drop).
+- **2 s grace.** With the recommended `link_up` (aligned / block-locked and no local or remote
+  fault) the grace starts at the partner's own link-up: the remote fault clears when the
+  partner receives the FPGA's signal, and on the ConnectX-6 Dx `link_up` rose within 0.22 s of
+  its carrier. Grace 0, 1 s and 3 s all survived 5 s forced drops; 2 s keeps margin for a
+  partner whose port is up before its RDMA stack answers. A design that drives `link_up` from
+  alignment alone (`stat_rx_aligned`) starts the grace before the partner is up (a ConnectX-6
+  Dx reported its link 2.4-2.9 s after the FPGA, 5.1-5.4 s after an FPGA-side relink) and
+  should raise `LINK_GRACE` to ~6 s.
 - **The cost.** A lost last packet or a lost ACK (no NAK follows) is detected after 5 ms instead
   of 1 ms. After a link blip with data in flight the requester waits up to the 2 s grace after
   the partner's link-up before it retransmits, unless a NAK (sequence error) from the host
@@ -284,7 +278,7 @@ Why the defaults are `ACK_TIMEOUT` **5 ms** (since v0.2.1; v0.2.0 had 1 ms) and 
   toggle while a link comes up, so one physical event usually counts more than once (ConnectX-6
   Dx: +2 per CMAC reset, +3 per forced drop, against +1 on the CMAC's own counter).
 
-Without the `link_up` wiring (v0.1 behaviour) the budget is (`RETRY_CNT` + 1) x `ACK_TIMEOUT`:
+Without the `link_up` wiring the budget is (`RETRY_CNT` + 1) x `ACK_TIMEOUT`:
 8 x 5 ms at reset, so any real link drop is fatal (retry exceeded, code 0xFF). Stretching the
 timer tick (`TICK_DIV` up to 1023 clocks per tick, with `ACK_TIMEOUT` 0xFFFFF: 3.33 s per
 timeout, 26.6 s budget) survived a 13.9 s pull on the ConnectX-6 bench and failed a 23.65 s one. It is a

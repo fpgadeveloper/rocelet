@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: MIT
 //
-// rocelet_mac - the MAC glue between a 100G CMAC (512-bit AXI-Stream, CMAC user clock) and
-// the engine:
+// rocelet_mac - the MAC glue between the Ethernet MAC (512-bit AXI-Stream here: rocelet_top
+// converts a narrower MAC's stream; the MAC user clock is the engine clock) and the engine:
 //
-//   CMAC RX -> rocelet_rx_fifo (store-and-forward; drops bad-FCS / overflow frames: the CMAC
+//   MAC RX  -> rocelet_rx_fifo (store-and-forward; drops bad-FCS / overflow frames: the MAC
 //              cannot be back-pressured, the engine can stall; its fill level drives the
 //              802.3x PAUSE requests)
 //           -> rocelet_vlan_strip (removes 802.1Q VID-0 priority tags)
 //           -> rocelet_rx_cls --> RoCE (UDP 4791)          -> engine
 //                             --> ARP / ICMP to my IP       -> rocelet_arp_icmp (or "other")
 //                             --> other                     -> m_axis_other (or dropped)
-//   engine TX -> rocelet_vlan_ins (optional tag) -> TX FIFO (store-and-forward: the CMAC must
+//   engine TX -> rocelet_vlan_ins (optional tag) -> TX FIFO (store-and-forward: the MAC must
 //              not see a gap inside a frame) --+
 //   ARP / ICMP replies -> small FIFO ----------+-> rocelet_mac_arb (frame-atomic; held while a
-//   s_axis_other -> store-and-forward FIFO ----+   received PAUSE is in force) -> CMAC TX
-//   rocelet_pause: received PAUSE -> TX gate; RX FIFO level -> ctl_tx_pause_req.
+//   s_axis_other -> store-and-forward FIFO ----+   received PAUSE is in force) -> MAC TX
+//   rocelet_pause: received PAUSE -> TX gate; RX FIFO level -> mac_pause_req.
 //
 // Copyright (c) 2026 Opsero Electronic Design Inc.
 
@@ -33,7 +33,6 @@ module rocelet_mac
     parameter int RX_FIFO_DEPTH       = 512,
     parameter int TX_FIFO_DEPTH       = 512,
     parameter int OTHER_TX_FIFO_DEPTH = 256,
-    parameter int CLK_MHZ             = 322,
     localparam int FW = $clog2(RX_FIFO_DEPTH) + 1
 ) (
     input  wire logic          clk,
@@ -54,8 +53,9 @@ module rocelet_mac
     input  wire logic          pause_tx_en,
     input  wire logic [15:0]   pause_xoff,
     input  wire logic [15:0]   pause_xon,
+    input  wire logic [19:0]   pause_qclk,
 
-    // CMAC
+    // MAC (512 bits)
     input  wire logic          mac_rx_reset,
     input  wire logic          mac_tx_reset,
     input  wire logic [511:0]  s_axis_rx_tdata,
@@ -68,10 +68,10 @@ module rocelet_mac
     output wire logic          m_axis_tx_tvalid,
     input  wire logic          m_axis_tx_tready,
     output wire logic          m_axis_tx_tlast,
-    input  wire logic [8:0]    stat_rx_pause_req,
-    input  wire logic [8:0]    stat_rx_pause_valid,
-    input  wire logic [15:0]   stat_rx_pause_quanta8,
-    output wire logic [8:0]    ctl_tx_pause_req,
+    input  wire logic          mac_pause_hold,
+    input  wire logic          mac_pause_valid,
+    input  wire logic [15:0]   mac_pause_quanta,
+    output wire logic          mac_pause_req,
 
     // engine
     output wire logic [511:0]  m_eng_tdata,
@@ -242,18 +242,18 @@ logic gate, ev_pload, ev_pxoff;
 if (PAUSE_EN) begin : g_pause
     logic        req;
     logic [15:0] lq;
-    rocelet_pause #(.CLK_MHZ(CLK_MHZ), .FILL_W(FW)) u_pause (
+    rocelet_pause #(.FILL_W(FW)) u_pause (
         .clk(clk), .rst(rst),
         .honour_en(pause_rx_en), .level_en(pause_rx_level), .req_en(pause_tx_en),
-        .xoff(pause_xoff), .xon(pause_xon), .fill(rx_fill),
-        .stat_rx_pause_req(stat_rx_pause_req), .stat_rx_pause_valid(stat_rx_pause_valid),
-        .stat_rx_pause_quanta8(stat_rx_pause_quanta8), .ctl_tx_pause_req(ctl_tx_pause_req),
+        .xoff(pause_xoff), .xon(pause_xon), .qclk(pause_qclk), .fill(rx_fill),
+        .mac_pause_hold(mac_pause_hold), .mac_pause_valid(mac_pause_valid),
+        .mac_pause_quanta(mac_pause_quanta), .mac_pause_req(mac_pause_req),
         .gate(gate), .req(req), .last_quanta(lq), .ev_load(ev_pload), .ev_xoff(ev_pxoff)
     );
     assign pause_req    = req;
     assign pause_quanta = lq;
 end else begin : g_nopause
-    assign ctl_tx_pause_req = '0;
+    assign mac_pause_req = 1'b0;
     assign gate = 1'b0; assign ev_pload = 1'b0; assign ev_pxoff = 1'b0;
     assign pause_req = 1'b0; assign pause_quanta = '0;
 end

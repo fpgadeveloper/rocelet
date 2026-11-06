@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: MIT
 //
-// tb_top_pair - two complete rocelet_top instances back to back, as two FPGAs on a 100G
-// link: A (requester, RTX_MODE under test) writes and sends to B (responder). Each
-// direction is a CMAC model: TX frames are taken with random back-pressure, dropped with
+// tb_top_pair - two complete rocelet_top instances back to back, as two FPGAs on a link:
+// A (requester, RTX_MODE under test) writes and sends to B (responder). Each direction is
+// a MAC model at MAC_WIDTH bits: TX frames are taken with random back-pressure, dropped with
 // probability +drop=<per mille>, delayed and delivered to the other side's RX port beat by
-// beat without back-pressure. 802.3x PAUSE between them: a side's ctl_tx_pause_req[8]
-// reaches the other side, after the link delay, as stat_rx_pause_valid[8] with quanta
-// 0xFFFF (XOFF, refreshed while held) or 0 (XON). A tags its RoCE frames with a VID-0
+// beat without back-pressure (at 512 bits without gaps, as the CMAC; at 64 / 128 / 256 bits
+// with random tvalid gaps inside frames, +igap=<per mille>, and partial last beats, through
+// the IP's width converters; the link then carries one MAC beat per clock). 802.3x PAUSE
+// between them: a side's mac_pause_req reaches the other side after the link delay, either
+// (PAUSE_LEVEL = 0, the CMAC way) as mac_pause_valid with quanta 0xFFFF (XOFF, refreshed
+// while held) or 0 (XON), or (PAUSE_LEVEL = 1, a MAC that times the quanta itself, e.g.
+// omac) as the level mac_pause_hold with CTRL.PAUSE_RX_LEVEL set. A tags its RoCE frames with a VID-0
 // priority tag (B strips it); the testbench injects an ARP request and an ICMP echo
 // request into A (A's replies are logged) and sends a frame through A's other-traffic
 // port, which must leave B's other-traffic port. All configuration through AXI-Lite;
@@ -27,23 +31,29 @@ module tb_top_pair
     parameter int NUM_QP     = 4,
     parameter     RTX_MODE   = "RING",
     parameter int RING_BYTES = 65536,
-    parameter int MAX_WR     = 32
+    parameter int MAX_WR     = 32,
+    parameter int MAC_WIDTH  = 512,
+    parameter bit PAUSE_LEVEL = 1'b0
 );
+localparam int KB = MAC_WIDTH / 8;
+localparam int RATIO = 512 / MAC_WIDTH;
 
 logic clk = 1'b0, rst = 1'b1;
 always #1.551 clk = ~clk;
 
 // ================= the two IPs =================
 `define SIDE(X) \
-wire  logic [511:0] X``_tx_tdata, X``_other_tdata; \
-wire  logic [63:0]  X``_tx_tkeep, X``_other_tkeep; \
+wire  logic [MAC_WIDTH-1:0] X``_tx_tdata; \
+wire  logic [KB-1:0]        X``_tx_tkeep; \
+wire  logic [511:0] X``_other_tdata; \
+wire  logic [63:0]  X``_other_tkeep; \
 wire  logic         X``_tx_tvalid, X``_tx_tlast, X``_tx_tuser, X``_other_tvalid, X``_other_tlast; \
 logic               X``_tx_tready = 1'b0; \
-logic [511:0]       X``_rx_tdata = '0; \
-logic [63:0]        X``_rx_tkeep = '0; \
+logic [MAC_WIDTH-1:0] X``_rx_tdata = '0; \
+logic [KB-1:0]      X``_rx_tkeep = '0; \
 logic               X``_rx_tvalid = 1'b0, X``_rx_tlast = 1'b0; \
-wire  logic [8:0]   X``_pause_out; \
-logic [8:0]         X``_pause_in_req = '0, X``_pause_in_valid = '0; \
+wire  logic         X``_pause_out; \
+logic               X``_pause_in_hold = 1'b0, X``_pause_in_valid = 1'b0; \
 logic [15:0]        X``_pause_in_quanta = '0; \
 logic               X``_pause_in_pulse = 1'b0; \
 logic [15:0] X``_awaddr, X``_araddr; \
@@ -102,15 +112,15 @@ logic [NUM_QP-1:0]  send_rnr = '0;
 
 `define TOP_PORTS(X) \
     .clk(clk), .rst(rst), .irq(), \
-    .mac_rx_reset(1'b0), .mac_tx_reset(1'b0), .mac_rx_aligned(1'b1), .link_up(1'b1), \
+    .mac_rx_reset(1'b0), .mac_tx_reset(1'b0), .mac_rx_status(1'b1), .link_up(1'b1), \
     .s_axis_rx_tdata(X``_rx_tdata), .s_axis_rx_tkeep(X``_rx_tkeep), .s_axis_rx_tvalid(X``_rx_tvalid), \
     .s_axis_rx_tlast(X``_rx_tlast), .s_axis_rx_tuser(1'b0), \
     .m_axis_tx_tdata(X``_tx_tdata), .m_axis_tx_tkeep(X``_tx_tkeep), .m_axis_tx_tvalid(X``_tx_tvalid), \
     .m_axis_tx_tready(X``_tx_tready), .m_axis_tx_tlast(X``_tx_tlast), .m_axis_tx_tuser(X``_tx_tuser), \
-    .stat_rx_pause_req(X``_pause_in_req), .stat_rx_pause_valid(X``_pause_in_valid), \
-    .stat_rx_pause_quanta8(X``_pause_in_quanta), .stat_rx_pause(X``_pause_in_pulse), .stat_tx_pause(1'b0), \
-    .ctl_tx_pause_req(X``_pause_out), \
-    .stat_rx_rsfec_corrected_cw_inc(1'b0), .stat_rx_rsfec_uncorrected_cw_inc(1'b0), \
+    .mac_pause_hold(X``_pause_in_hold), .mac_pause_valid(X``_pause_in_valid), \
+    .mac_pause_quanta(X``_pause_in_quanta), .mac_pause_req(X``_pause_out), \
+    .mac_pause_rx_frame(X``_pause_in_pulse), .mac_pause_tx_frame(1'b0), \
+    .mac_fec_corr_inc(1'b0), .mac_fec_uncorr_inc(1'b0), \
     .m_axi_awid(X``_awid), .m_axi_awaddr(X``_mawaddr), .m_axi_awlen(X``_awlen), .m_axi_awsize(X``_awsize), \
     .m_axi_awburst(X``_awburst), .m_axi_awlock(X``_awlock), .m_axi_awcache(X``_awcache), .m_axi_awprot(X``_awprot), \
     .m_axi_awvalid(X``_mawvalid), .m_axi_awready(X``_mawready), .m_axi_wdata(X``_mwdata), .m_axi_wstrb(X``_wstrb_m), \
@@ -128,7 +138,8 @@ logic [NUM_QP-1:0]  send_rnr = '0;
 
 rocelet_top #(
     .NUM_QP(NUM_QP), .NUM_MR(1), .QPN_BASE(24'h000100), .READ_DEPTH(4), .RTX_MODE(RTX_MODE),
-    .RING_BYTES(RING_BYTES), .RING_RAM("block"), .MAX_WR(MAX_WR), .MEM_RD_BUF(128), .CLK_MHZ(16)
+    .RING_BYTES(RING_BYTES), .RING_RAM("block"), .MAX_WR(MAX_WR), .MEM_RD_BUF(128), .CLK_MHZ(16),
+    .MAC_WIDTH(MAC_WIDTH)
 ) dut_a (
     `TOP_PORTS(a),
     .m_axis_other_tdata(a_other_tdata), .m_axis_other_tkeep(a_other_tkeep), .m_axis_other_tvalid(a_other_tvalid),
@@ -146,7 +157,8 @@ rocelet_top #(
 
 rocelet_top #(
     .NUM_QP(NUM_QP), .NUM_MR(1), .QPN_BASE(24'h000200), .READ_DEPTH(4), .RTX_MODE("RING"),
-    .RING_BYTES(65536), .RING_RAM("block"), .MAX_WR(16), .MEM_RD_BUF(128), .CLK_MHZ(16)
+    .RING_BYTES(65536), .RING_RAM("block"), .MAX_WR(16), .MEM_RD_BUF(128), .CLK_MHZ(16),
+    .MAC_WIDTH(MAC_WIDTH)
 ) dut_b (
     `TOP_PORTS(b),
     .m_axis_other_tdata(b_other_tdata), .m_axis_other_tkeep(b_other_tkeep), .m_axis_other_tvalid(b_other_tvalid),
@@ -164,7 +176,7 @@ rocelet_top #(
 
 // ================= test control =================
 string  dir;
-integer seed, drop, rnr, r, nwr_exp, f_cpl, f_err, f_send, f_bcpl, f_berr, f_ctl, f_oth, ferr_qp, ferr_at;
+integer seed, drop, igap, rnr, r, nwr_exp, f_cpl, f_err, f_send, f_bcpl, f_berr, f_ctl, f_oth, ferr_qp, ferr_at;
 int     n_cpl = 0;
 bit     cfg_done = 0, wr_done = 0, ctl_done = 0;
 localparam logic [47:0] MAC_A = 48'h02_00_00_00_00_0A, MAC_B = 48'h02_00_00_00_00_0B;
@@ -179,14 +191,23 @@ function automatic int popc(input logic [63:0] k);
     return c;
 endfunction
 
+// PAUSE watermarks (XON, XOFF in 64-byte beats): a narrow link never fills the RX FIFO as far
+// as a 512-bit one, so the narrow configurations request PAUSE from one large frame on
+localparam logic [31:0] PWM = (RATIO > 1) ? {16'd4, 16'd12} : {16'd32, 16'd96};
+
 task automatic cfg_common(input bit side_b);
     logic [31:0] rd;
     if (!side_b) begin
         a_read(R_ID, rd);
         if (rd != 32'h52434C54) $display("TB_ERROR ID register %08h", rd);
-        // v0.2: version, link-loss hold registers and status (link_up tied high: up, no hold)
+        // version, link-loss hold registers and status (link_up tied high: up, no hold)
         a_read(R_VERSION, rd);
-        if (rd != 32'h00000202) $display("TB_ERROR VERSION %08h", rd);
+        if (rd != 32'h00000300) $display("TB_ERROR VERSION %08h", rd);
+        // v0.3 capability registers: MAC width, link speed (default 100), clock (CLK_MHZ 16)
+        a_read(R_CAPS, rd);
+        if (rd != {8'd0, 8'd100, 16'(MAC_WIDTH)}) $display("TB_ERROR CAPS %08h", rd);
+        a_read(R_CLK_KHZ, rd);
+        if (rd != 32'd16000) $display("TB_ERROR CLK_KHZ %08h", rd);
         a_read(R_LINK_GRACE, rd);
         if (rd != RST_LINK_GRACE) $display("TB_ERROR LINK_GRACE reset value %08h", rd);
         a_write(R_LINK_GRACE, 32'hFF123456);
@@ -196,17 +217,18 @@ task automatic cfg_common(input bit side_b);
         a_read(R_STATUS, rd);
         if (rd[6:5] != 2'b01) $display("TB_ERROR STATUS %08h: LINK_UP / TIMER_HOLD", rd);
         a_write(R_MAC_LO, MAC_A[31:0]); a_write(R_MAC_HI, MAC_A[47:32]); a_write(R_IP4, IP_A);
-        a_write(R_TICK_DIV, 32'd16); a_write(R_ACK_TIMEOUT, 32'd300); a_write(R_RNR_MIN, 32'd1);
-        a_write(R_RNR_MAX, 32'd2000); a_write(R_ACKREQ_N, 32'd4); a_write(R_PAUSE_WM, {16'd32, 16'd96});
+        // the ACK timeout scales with the link's beat rate (one MAC beat per clock)
+        a_write(R_TICK_DIV, 32'd16); a_write(R_ACK_TIMEOUT, 32'(300 * RATIO)); a_write(R_RNR_MIN, 32'd1);
+        a_write(R_RNR_MAX, 32'd2000); a_write(R_ACKREQ_N, 32'd4); a_write(R_PAUSE_WM, PWM);
         a_write(R_VLAN_TCI, 32'h6000);
         a_read(R_CTRL, rd);
-        a_write(R_CTRL, rd | 32'h40);                       // VLAN_TX_TAG
+        a_write(R_CTRL, rd | 32'h40 | (PAUSE_LEVEL ? 32'h400 : 32'h0));    // VLAN_TX_TAG, PAUSE_RX_LEVEL
     end else begin
         b_write(R_MAC_LO, MAC_B[31:0]); b_write(R_MAC_HI, MAC_B[47:32]); b_write(R_IP4, IP_B);
         b_write(R_TICK_DIV, 32'd16); b_write(R_RNR_NAK_TIMER, 32'd1); b_write(R_ACKREQ_N, 32'd0);
-        b_write(R_PAUSE_WM, {16'd32, 16'd96});
+        b_write(R_PAUSE_WM, PWM);
         b_read(R_CTRL, rd);
-        b_write(R_CTRL, rd | 32'h100);                      // OTHER_RX_EN
+        b_write(R_CTRL, rd | 32'h100 | (PAUSE_LEVEL ? 32'h400 : 32'h0));   // OTHER_RX_EN, PAUSE_RX_LEVEL
     end
 endtask
 
@@ -217,6 +239,7 @@ initial begin
     if (!$value$plusargs("dir=%s", dir)) dir = ".";
     if (!$value$plusargs("seed=%d", seed)) seed = 1;
     if (!$value$plusargs("drop=%d", drop)) drop = 20;
+    if (!$value$plusargs("igap=%d", igap)) igap = 0;
     if (!$value$plusargs("rnr=%d", rnr)) rnr = 0;
     if (!$value$plusargs("nwr=%d", nwr_exp)) nwr_exp = 0;
     if (!$value$plusargs("ferr_qp=%d", ferr_qp)) ferr_qp = -1;
@@ -297,7 +320,8 @@ always @(posedge clk) begin
 end
 
 // ================= links =================
-// TX side of each direction: frames collected, then dropped or queued with a due time
+// TX side of each direction: frames collected (MAC beats, zero-extended to 512 bits), then
+// dropped or queued with a due time
 logic [511:0] qd_ab [$], qd_ba [$], fd_ab [$], fd_ba [$];
 logic [63:0]  qk_ab [$], qk_ba [$], fk_ab [$], fk_ba [$];
 logic         ql_ab [$], ql_ba [$], fl_ab [$], fl_ba [$];
@@ -307,6 +331,13 @@ int           n_ab = 0, n_ba = 0, d_ab = 0, d_ba = 0;
 localparam int LINK_DELAY = 60;
 always @(posedge clk) cyc <= cyc + 1;
 
+// the first 64 bytes of a collected frame
+function automatic logic [511:0] head64(input logic [511:0] q [$]);
+    logic [511:0] h = '0;
+    for (int i = 0; i < RATIO && i < q.size(); i++) h[i*MAC_WIDTH +: MAC_WIDTH] = q[i][MAC_WIDTH-1:0];
+    return h;
+endfunction
+
 function automatic bit is_roce(input logic [511:0] d);
     // IPv4 UDP 4791, with or without one 802.1Q tag
     if (d[12*8 +: 8] == 8'h81 && d[13*8 +: 8] == 8'h00) return d[16*8 +: 8] == 8'h08 && d[40*8 +: 8] == 8'h12 &&
@@ -314,18 +345,16 @@ function automatic bit is_roce(input logic [511:0] d);
     return d[12*8 +: 8] == 8'h08 && d[13*8 +: 8] == 8'h00 && d[36*8 +: 8] == 8'h12 && d[37*8 +: 8] == 8'hB7;
 endfunction
 
-logic a_first = 1'b1, a_roce = 1'b0;
 always @(posedge clk) begin
     a_tx_tready <= (urand1000() >= 50);
     b_tx_tready <= (urand1000() >= 50);
     if (a_tx_tvalid && a_tx_tready) begin
         logic roce;
-        roce = a_first ? is_roce(a_tx_tdata) : a_roce;
-        if (a_first) a_roce <= roce;
-        a_first <= a_tx_tlast;
-        if (!roce) $fdisplay(f_ctl, "%0d %0d %0128h 0", a_tx_tlast, popc(a_tx_tkeep), a_tx_tdata);
-        fd_ab.push_back(a_tx_tdata); fk_ab.push_back(a_tx_tkeep); fl_ab.push_back(a_tx_tlast);
+        fd_ab.push_back(512'(a_tx_tdata)); fk_ab.push_back(64'(a_tx_tkeep)); fl_ab.push_back(a_tx_tlast);
         if (a_tx_tlast) begin
+            roce = is_roce(head64(fd_ab));
+            if (!roce)
+                foreach (fd_ab[i]) $fdisplay(f_ctl, "%0d %0d %0128h 0", fl_ab[i], popc(fk_ab[i]), fd_ab[i]);
             n_ab++;
             if (urand1000() >= drop || !roce) begin
                 while (fd_ab.size()) begin
@@ -338,7 +367,7 @@ always @(posedge clk) begin
         end
     end
     if (b_tx_tvalid && b_tx_tready) begin
-        fd_ba.push_back(b_tx_tdata); fk_ba.push_back(b_tx_tkeep); fl_ba.push_back(b_tx_tlast);
+        fd_ba.push_back(512'(b_tx_tdata)); fk_ba.push_back(64'(b_tx_tkeep)); fl_ba.push_back(b_tx_tlast);
         if (b_tx_tlast) begin
             n_ba++;
             if (urand1000() >= drop) begin
@@ -353,18 +382,19 @@ always @(posedge clk) begin
     end
 end
 
-// RX side: a frame starts when it is due and then streams without gaps (CMAC RX)
+// RX side: a frame starts when it is due and then streams (512 bits: without gaps, as the
+// CMAC RX; narrower: with random gaps, +igap per mille)
 bit ab_in = 0, ba_in = 0;
 always @(posedge clk) begin
     b_rx_tvalid <= 1'b0;
-    if (qd_ab.size() && (ab_in || qt_ab[0] <= cyc)) begin
-        b_rx_tdata <= qd_ab.pop_front(); b_rx_tkeep <= qk_ab.pop_front(); b_rx_tlast <= ql_ab[0];
+    if (qd_ab.size() && (ab_in || qt_ab[0] <= cyc) && !(ab_in && urand1000() < igap)) begin
+        b_rx_tdata <= MAC_WIDTH'(qd_ab.pop_front()); b_rx_tkeep <= KB'(qk_ab.pop_front()); b_rx_tlast <= ql_ab[0];
         ab_in = !ql_ab.pop_front(); void'(qt_ab.pop_front());
         b_rx_tvalid <= 1'b1;
     end
     a_rx_tvalid <= 1'b0;
-    if (qd_ba.size() && (ba_in || qt_ba[0] <= cyc)) begin
-        a_rx_tdata <= qd_ba.pop_front(); a_rx_tkeep <= qk_ba.pop_front(); a_rx_tlast <= ql_ba[0];
+    if (qd_ba.size() && (ba_in || qt_ba[0] <= cyc) && !(ba_in && urand1000() < igap)) begin
+        a_rx_tdata <= MAC_WIDTH'(qd_ba.pop_front()); a_rx_tkeep <= KB'(qk_ba.pop_front()); a_rx_tlast <= ql_ba[0];
         ba_in = !ql_ba.pop_front(); void'(qt_ba.pop_front());
         a_rx_tvalid <= 1'b1;
     end
@@ -372,29 +402,31 @@ end
 
 // the TB's own frames towards A (ARP request, ICMP echo request): into the B->A link
 task automatic inject_ba(input byte unsigned fr [], input int len);
-    for (int i = 0; i < len; i += 64) begin
+    for (int i = 0; i < len; i += KB) begin
         logic [511:0] d; logic [63:0] k;
         d = '0; k = '0;
-        for (int j = 0; j < 64 && i + j < len; j++) begin d[j*8 +: 8] = fr[i + j]; k[j] = 1'b1; end
-        qd_ba.push_back(d); qk_ba.push_back(k); ql_ba.push_back(i + 64 >= len); qt_ba.push_back(cyc + 1);
+        for (int j = 0; j < KB && i + j < len; j++) begin d[j*8 +: 8] = fr[i + j]; k[j] = 1'b1; end
+        qd_ba.push_back(d); qk_ba.push_back(k); ql_ba.push_back(i + KB >= len); qt_ba.push_back(cyc + 1);
     end
 endtask
 
-// 802.3x PAUSE between the two sides (link delay, XOFF refresh while held)
+// 802.3x PAUSE between the two sides (link delay, XOFF refresh while held): quanta pulses
+// (PAUSE_LEVEL 0) or the receiving MAC's hold level (PAUSE_LEVEL 1)
 `define PAUSE_LINK(FROM, TO) \
 logic [LINK_DELAY-1:0] FROM``_pdl = '0; \
+logic FROM``_was = 1'b0; \
 int FROM``_refresh = 0; \
 always @(posedge clk) begin \
-    logic now_req, was_req; \
-    FROM``_pdl <= {FROM``_pdl[LINK_DELAY-2:0], FROM``_pause_out[8]}; \
+    logic now_req; \
+    FROM``_pdl <= {FROM``_pdl[LINK_DELAY-2:0], FROM``_pause_out}; \
     now_req = FROM``_pdl[LINK_DELAY-1]; \
-    was_req = TO``_pause_in_req[8]; \
-    TO``_pause_in_req <= {now_req, 8'd0}; \
-    TO``_pause_in_valid <= '0; \
+    FROM``_was <= now_req; \
+    TO``_pause_in_hold <= PAUSE_LEVEL && now_req; \
+    TO``_pause_in_valid <= 1'b0; \
     TO``_pause_in_pulse <= 1'b0; \
     FROM``_refresh <= (now_req && FROM``_refresh < 8000) ? FROM``_refresh + 1 : 0; \
-    if (now_req != was_req || FROM``_refresh == 8000) begin \
-        TO``_pause_in_valid <= {1'b1, 8'd0}; \
+    if (now_req != FROM``_was || FROM``_refresh == 8000) begin \
+        TO``_pause_in_valid <= !PAUSE_LEVEL; \
         TO``_pause_in_quanta <= now_req ? 16'hFFFF : 16'h0000; \
         TO``_pause_in_pulse <= 1'b1; \
     end \

@@ -2,7 +2,7 @@
 //
 // rocelet_pkt_fifo - store-and-forward frame FIFO (512-bit AXI-Stream, back-pressure on
 // both sides). A frame is offered downstream only once its last beat is in, so the
-// output never pauses inside a frame: the CMAC TX interface must not see tvalid drop
+// output never pauses inside a frame: the MAC TX interface must not see tvalid drop
 // between the first and the last beat of a frame (underrun = bad FCS). Frames longer than
 // DEPTH beats would deadlock; the sources bound their frames. Beats are stored as
 // {last, byte count, data} (tkeep must be contiguous from bit 0).

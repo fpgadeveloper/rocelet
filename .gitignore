@@ -1,6 +1,7 @@
 # simulation / synthesis build products
 sim/build/
 synth/build/
+synth/build_mac/
 synth/*.log
 synth/*.jou
 .Xil/
