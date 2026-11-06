@@ -3,6 +3,24 @@
 All notable changes to rocelet. Versions follow semantic versioning; `-dev` versions are work in
 progress on the `dev` branch, releases are on `main` and tagged.
 
+## v0.3.1-dev (2026-11-06)
+
+Documentation only: no port, parameter or logic change; `VERSION` still reads 0.3.0.
+
+### Docs
+
+- **Engine on its own clock** (interface.md, "Engine on its own clock"; integration.md 4.3): the
+  engine may run on a free-running clock of its own with the MAC behind asynchronous FIFOs in
+  the design, under three conditions: RX read rate ≥ the MAC's write rate (RX has no `tready`;
+  at 100G with 48-byte MAC beats the packed peak is 281 M beats/s, so ≥ 300 MHz), whole-frame
+  drop with a counter on RX overflow, a store-and-forward TX FIFO. Reference: the
+  qsfp28-fmc-rocelet `mac_mrmac100g` adapter.
+- designs.md: the qsfp28-fmc-rocelet `vck190_fmcp1` target (VCK190, Versal MRMAC 100G with
+  RS-FEC, `MAC_WIDTH` 512, `CLK_KHZ` 300000, `LINK_GBPS` 100), validated on hardware.
+- throughput.md: the 100G MRMAC column (VCK190 against a ConnectX-6 Dx: FPGA WRITE with
+  immediate 93.49, host WRITE 97.48, SEND 91.75, host READ 96.33 Gb/s at PMTU 4096; PS DDR
+  window 79.37 / 79.20 Gb/s with PAUSE TX).
+
 ## v0.3.0 (2026-11-05)
 
 Generic MAC interface for 40G / 10G (and 25G) MACs at 156.25 MHz-class clocks, for the

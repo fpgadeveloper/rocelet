@@ -39,7 +39,7 @@ primitives, no IP cores and no include paths.
 
 | Signal | Connect to |
 |---|---|
-| `clk` | the MAC user clock, the clock of both MAC AXI-Streams. CMAC: `gt_txusrclk2` (322.265625 MHz for 100GBASE-R4); drive the CMAC's `rx_clk` from `gt_txusrclk2` too (the usual configuration), so the RX AXI-Stream is in the same clock. 40GBASE-R4 / 10GBASE-R MAC (omac): its 156.25 MHz user clock. Set `CLK_MHZ` / `CLK_KHZ` to it and `MAC_WIDTH` / `LINK_GBPS` to the MAC (section 4). |
+| `clk` | the MAC user clock, the clock of both MAC AXI-Streams. CMAC: `gt_txusrclk2` (322.265625 MHz for 100GBASE-R4); drive the CMAC's `rx_clk` from `gt_txusrclk2` too (the usual configuration), so the RX AXI-Stream is in the same clock. 40GBASE-R4 / 10GBASE-R MAC (omac): its 156.25 MHz user clock. Or a free-running clock of the engine's own, with the MAC behind asynchronous FIFOs (section 4.3; the Versal MRMAC: 300 MHz). Set `CLK_MHZ` / `CLK_KHZ` to it and `MAC_WIDTH` / `LINK_GBPS` to the MAC (section 4). |
 | `rst` | a synchronous, active-high reset in `clk` (e.g. a `proc_sys_reset` in `gt_txusrclk2`), held for at least 4 clocks |
 | `mac_rx_reset`, `mac_tx_reset` | the MAC's RX / TX resets (CMAC `usr_rx_reset`, `usr_tx_reset`; omac: tie 0, its `rst` covers both) |
 | `mac_rx_status` | the MAC's RX alignment / block lock (CMAC `stat_rx_aligned`, omac `stat_block_lock`; only reported in `STATUS`) |
@@ -56,12 +56,12 @@ side"): FCS checked and stripped on RX, appended (with padding to 60 bytes) on T
 configuration (enables, FEC, loopback, PAUSE quanta and refresh) and the MAC's statistics stay
 in the design next to the MAC; rocelet has no MAC configuration port.
 
-| `rocelet_top` parameter | 100G CMAC | 40GBASE-R4 MAC (omac_40g) | 10GBASE-R MAC (omac_10g) |
-|---|---|---|---|
-| `MAC_WIDTH` | 512 | 256 | 64 |
-| `CLK_MHZ` / `CLK_KHZ` | 322 / 322266 | 156 / 156250 | 156 / 156250 |
-| `LINK_GBPS` | 100 | 40 | 10 |
-| received PAUSE | quanta (`mac_pause_valid` / `_quanta`) or level | level (`mac_pause_hold`, `CTRL.PAUSE_RX_LEVEL` = 1) | level |
+| `rocelet_top` parameter | 100G CMAC | 40GBASE-R4 MAC (omac_40g) | 10GBASE-R MAC (omac_10g) | 100G Versal MRMAC (behind an adapter, section 4.3) |
+|---|---|---|---|---|
+| `MAC_WIDTH` | 512 | 256 | 64 | 512 (the adapter packs the MRMAC's 48-byte beats) |
+| `CLK_MHZ` / `CLK_KHZ` | 322 / 322266 | 156 / 156250 | 156 / 156250 | 300 / 300000 (the engine's own clock) |
+| `LINK_GBPS` | 100 | 40 | 10 | 100 |
+| received PAUSE | quanta (`mac_pause_valid` / `_quanta`) or level | level (`mac_pause_hold`, `CTRL.PAUSE_RX_LEVEL` = 1) | level | quanta (pulse, as the CMAC) |
 
 A design whose one bitstream runs the link at more than one speed (e.g. a 25G MAC that also
 does 10G) writes `PAUSE_QCLK` for the speed in use; nothing else in rocelet depends on the line
@@ -114,6 +114,29 @@ store-and-forward, and `CNT_TX_UNDERRUN` stays 0. The CMAC's RX has no back-pres
   engine with `MAC_WIDTH` 512, so its self-test taps keep 64-byte beats; `CAPS` then reads 512
   and the design reports the MAC width in a register of its own. Instantiating `rocelet_top`
   with `MAC_WIDTH` 256 / 64 is equivalent.
+
+### 4.3 A MAC in another clock: the engine on its own clock
+
+When the MAC's user clock is not a good engine clock (a bus other than rocelet's AXI-Streams, a
+clock that stops with the transceiver, or one the engine cannot close timing at), run the
+engine on a free-running clock of its own and put the MAC behind asynchronous FIFOs in the
+design. The conditions (interface.md, ["Engine on its own clock"](interface.md#engine-on-its-own-clock-mac-behind-asynchronous-fifos)):
+
+- **RX read rate ≥ MAC write rate**, counted in 64-byte engine beats after packing, because RX
+  has no `tready`. At 100G with 48-byte MAC beats the packed peak is 281 M beats/s (65-byte
+  frames), so the engine clock must be ≥ 300 MHz.
+- **Whole-frame drop on RX overflow, with a counter**: never a partial frame passed on as good
+  (drop it whole, or cut it and flag it bad on its last beat).
+- **Store-and-forward TX FIFO**, so the MAC never sees a gap inside a frame.
+
+Set `CLK_MHZ` / `CLK_KHZ` to the engine clock (the timers, `PAUSE_QCLK` and the rate limiter
+follow it) and `LINK_GBPS` to the link. The engine's clock then no longer stops with the link:
+`s_axil_*` and `m_axi_*` (in `clk`) stay alive through a GT reset or a link loss.
+
+Hardware reference: the qsfp28-fmc-rocelet `vck190_fmcp1` target ([](designs.md)), with the
+Versal MRMAC (1x100GE, RS-FEC, 384-bit independent client mode at 390.625 MHz) behind its
+adapter `mac_mrmac100g` and the engine at 300 MHz. Validated against a ConnectX-6 Dx at 100G
+([](throughput.md)).
 
 ## 5. The other-traffic ports
 
@@ -191,6 +214,10 @@ spread of the slack is about 0.1 ns.
 (or write `TICK_DIV` and `PAUSE_QCLK` at run time; firmware that converts clock counts reads
 `CLK_KHZ`). The responder then reaches line rate only at PMTU 4096.
 
+On a Versal XCVC1902-2 (VCK190) the qsfp28-fmc-rocelet system around the engine (`rocelet_sys`:
+engine, URAM window, self-test logic, HSB producer) closes at 300 MHz on its own clock: WNS
++0.023 ns out of context, +0.043 ns in the full design.
+
 ## 9. Link loss (cable pulls, link partner resets)
 
 An RC requester normally survives an outage only as long as its retry budget: `RETRY_CNT` + 1
@@ -249,12 +276,15 @@ the AMD flow, and what a port to another device family has to look at:
   equivalents (such as Quartus's `ramstyle`) can be substituted, and the ring's RAM type
   (`RING_RAM`) should then be set to a RAM type the device has.
 - **MAC interface and clock.** The engine takes a 64-, 128-, 256- or 512-bit AXI-Stream MAC
-  interface (`MAC_WIDTH`; 512 bits inside) and runs entirely in the MAC's clock domain,
+  interface (`MAC_WIDTH`; 512 bits inside) and runs entirely in one clock: the MAC's,
   322.265625 MHz for the AMD CMAC (250 MHz also closes on Kintex UltraScale+), 156.25 MHz for
-  a 40G or 10G MAC. A MAC with another bus or with RX in a separate clock needs a thin adapter
-  (an asynchronous FIFO), and timing has to be closed at that clock on the target device.
+  a 40G or 10G MAC, or a clock of its own with the MAC behind asynchronous FIFOs (300 MHz with
+  the Versal MRMAC, section 4.3). A MAC with another bus or with RX in a separate clock needs a
+  thin adapter (asynchronous FIFOs), and timing has to be closed at that clock on the target
+  device.
 - **Flow and proof.** The simulation regression runs on Vivado's xsim, the resource and timing
   figures ([resources.md](resources.md)) come from Vivado out-of-context runs, the block-design
   wrapper (`rtl/rocelet_bd.v`) is for IP integrator, and the hardware results were taken on a
-  Kintex UltraScale+ (KCU116, 100G) and a Zynq UltraScale+ MPSoC (ZCU106, 40G and 10G).
+  Kintex UltraScale+ (KCU116, 100G), a Zynq UltraScale+ MPSoC (ZCU106, 40G and 10G) and a
+  Versal AI Core device (VCK190, 100G).
   Nothing has been synthesised, timed or run on another vendor's device.

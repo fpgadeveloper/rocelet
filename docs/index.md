@@ -12,7 +12,7 @@ Source code, releases and issues: [github.com/fpgadeveloper/rocelet](https://git
 The reference design, on the Opsero 2x QSFP28 FMC, is
 [qsfp28-fmc-rocelet](https://github.com/fpgadeveloper/qsfp28-fmc-rocelet), documented at
 [qsfp28-rocelet.ethernetfmc.com](https://qsfp28-rocelet.ethernetfmc.com): 100G on a KCU116,
-40G (or 10G) on a ZCU106 ([](designs.md)).
+40G (or 10G) on a ZCU106, 100G on a VCK190 ([](designs.md)).
 
 ![rocelet block diagram](images/rocelet-block.png)
 

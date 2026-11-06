@@ -6,7 +6,9 @@ in the change log at the end of this file, with its date, and named in the commi
 `rocelet_top` is the module a design instantiates (as a git submodule; source list
 `rtl/rocelet.f`). Everything runs in **one clock**, `clk`, the MAC's user clock: 322.265625 MHz
 for the 512-bit 100G CMAC (250 MHz also closes timing), 156.25 MHz for a 256-bit 40GBASE-R4 or a
-64-bit 10GBASE-R MAC. There is no clock-domain crossing inside the IP. The engine is 512 bits
+64-bit 10GBASE-R MAC. There is no clock-domain crossing inside the IP. `clk` may also be a
+free-running clock of the engine's own, with the MAC behind asynchronous FIFOs in the design
+(the Versal MRMAC: [Engine on its own clock](#engine-on-its-own-clock-mac-behind-asynchronous-fifos)). The engine is 512 bits
 wide; `MAC_WIDTH` selects the width of the MAC AXI-Stream ports (64, 128, 256 or 512 bits), and
 for a MAC narrower than 512 bits the width converters inside `rocelet_top` pack and unpack the
 beats, so the MAC's AXI-Stream connects directly (see [MAC side](#mac-side)). The register map
@@ -59,7 +61,7 @@ beat of a frame but the last is full. All user ports other than the MAC ports ar
 
 | Port | Dir | Width | Description |
 |---|---|---|---|
-| `clk` | in | 1 | engine clock = the MAC user clock (CMAC: `gt_txusrclk2`; omac: its user clock); the MAC RX and TX AXI-Streams must both be in it |
+| `clk` | in | 1 | engine clock = the MAC user clock (CMAC: `gt_txusrclk2`; omac: its user clock), or a free-running clock of its own with the MAC behind asynchronous FIFOs ([below](#engine-on-its-own-clock-mac-behind-asynchronous-fifos)); the `s_axis_rx_*` and `m_axis_tx_*` streams must both be in it |
 | `rst` | in | 1 | synchronous reset, active high (at least 4 cycles) |
 | `irq` | out | 1 | level: a QP error is latched (`STATUS.ERR`) and `CTRL.IRQ_EN` = 1 |
 
@@ -74,7 +76,8 @@ last beat); the FCS is appended and short frames are padded to 60 bytes on TX; R
 see a gap inside a frame (rocelet never makes one); 802.3x PAUSE frames are parsed and sent by
 the MAC (or PAUSE is unused, `PAUSE_EN` = 0 or `CTRL.PAUSE_RX_EN` / `PAUSE_TX_EN` = 0). If a
 MAC delivers RX in another clock (a recovered clock), put an asynchronous FIFO at the MAC width
-in front of `s_axis_rx_*`.
+in front of `s_axis_rx_*`; for a MAC whose RX and TX both run in a clock of their own, see
+[Engine on its own clock](#engine-on-its-own-clock-mac-behind-asynchronous-fifos).
 
 | Port | Dir | Width | Description |
 |---|---|---|---|
@@ -130,6 +133,37 @@ XOFF quanta / refresh in `ctl_tx_pause_quanta` / `ctl_tx_pause_refresh`), `mac_p
 (the IP's `rst` covers both), FEC inputs 0. Its RX stream has occasional single-cycle `tvalid`
 gaps (clock crossing) and `tuser` on the last beat; both are handled.
 
+#### Engine on its own clock (MAC behind asynchronous FIFOs)
+
+The engine does not have to run in the MAC's clock. A design may give it a free-running clock
+of its own and put the MAC behind asynchronous FIFOs (with any width or bus conversion the MAC
+needs) at the MAC boundary, so that `s_axis_rx_*` and `m_axis_tx_*` are in `clk`. This suits a
+MAC with a bus other than the AXI-Streams above, or whose user clock stops with the transceiver
+(a GT reset, a link loss). Set `CLK_MHZ` / `CLK_KHZ` to the engine clock, `LINK_GBPS` to the
+link. Three conditions keep it correct:
+
+- **RX: the engine's read rate must be at least the MAC's write rate.** `s_axis_rx_*` has no
+  `tready`, so the RX FIFO cannot hold the MAC back. Count in engine beats (64 bytes) after
+  packing: at 100G with 48-byte MAC beats, a 65-byte frame takes two MAC beats and two engine
+  beats, so the packed peak is **281 M beats/s**, and the engine clock must be **≥ 300 MHz**
+  (250 MHz overflows under a flood of small frames).
+- **RX overflow: drop whole frames and count them.** Should the FIFO lack room, the adapter must
+  never hand the engine a partial frame as a good one: drop a frame whole when its first beat
+  finds no room, cut a frame that is already in flight and flag it bad on its last beat (`tuser`;
+  the engine drops it), and count each lost frame in a register of the design. RoCE recovers
+  the loss (go-back-N); PAUSE TX keeps it from happening under memory back-pressure.
+- **TX: store and forward.** The MAC must never see a gap inside a frame. rocelet never makes
+  one on `m_axis_tx_*`, but a clock crossing can (the FIFO runs empty when the engine clock is
+  slower than the MAC's); a TX packet FIFO that passes a frame on only once its last beat is in
+  removes it.
+
+Reference: the `mac_mrmac100g` adapter of the qsfp28-fmc-rocelet `vck190_fmcp1` target (Versal
+MRMAC 1x100GE, 384 bits at 390.625 MHz; engine at 300 MHz; [](designs.md)): RX packer 48 → 64
+bytes and a 512 x 512-bit asynchronous FIFO with whole-frame drop accounting, a 32 KB
+store-and-forward TX packet FIFO and a 64 → 48-byte downsizer, status and counter events
+synchronised into the engine clock. The MRMAC reports a received PAUSE as a pulse with its
+quanta (`mac_pause_valid` / `mac_pause_quanta`, as the CMAC).
+
 #### MAC width and throughput
 
 The engine works on 512-bit (64-byte) beats at `clk` whatever the MAC width, so its frame rate
@@ -138,6 +172,7 @@ per clock is the same as at 100G; what changes is the clock and the line rate.
 | MAC | `MAC_WIDTH` | `clk` | MAC beats | engine capacity (raw, each way) | line rate | headroom |
 |---|---|---|---|---|---|---|
 | 100G CMAC | 512 | 322.27 MHz | 1 per clock | 165 Gb/s | 100 Gb/s | 1.65x |
+| 100G MRMAC behind asynchronous FIFOs (design adapter) | 512 | 300 MHz (own clock) | packed to 64 bytes by the adapter | 154 Gb/s | 100 Gb/s | 1.54x |
 | 40GBASE-R4 (omac_40g) | 256 | 156.25 MHz | 1 per clock | 80 Gb/s | 40 Gb/s | 2x |
 | 10GBASE-R (omac_10g) | 64 | 156.25 MHz | 1 per clock | 80 Gb/s | 10 Gb/s | 8x |
 | 25GBASE-R (omac_10g at 25G) | 64 | 390.625 MHz | 1 per clock | 200 Gb/s | 25 Gb/s | 8x |

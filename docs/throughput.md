@@ -1,14 +1,16 @@
 # Throughput per MAC width
 
-The engine is 512 bits wide and runs at the MAC's user clock whatever the MAC width
+The engine is 512 bits wide and runs at the MAC's user clock whatever the MAC width, or at a
+clock of its own with the MAC behind asynchronous FIFOs
 ([interface.md, "MAC width and throughput"](interface.md#mac-width-and-throughput)). Its raw
-capacity is therefore at least 1.65x the line rate at 100G and 2x at 40G, so every operation
+capacity is therefore at least 1.5x the line rate at 100G and 2x at 40G, so every operation
 reaches line rate at the large PMTUs; the small-packet limits (per-frame engine costs, READ
 responses) move with the clock.
 
 | MAC | `MAC_WIDTH` | `clk` | engine capacity (raw, each way) | line rate |
 |---|---|---|---|---|
 | 100G CMAC | 512 | 322.27 MHz | 165 Gb/s | 100 Gb/s |
+| 100G Versal MRMAC (behind the design's adapter) | 512 | 300 MHz (engine clock of its own) | 154 Gb/s | 100 Gb/s |
 | 40GBASE-R4 (omac_40g) | 256 | 156.25 MHz | 80 Gb/s | 40 Gb/s |
 | 10GBASE-R (omac_10g) | 64 | 156.25 MHz | 80 Gb/s | 10 Gb/s |
 
@@ -24,20 +26,26 @@ stated, against an NVIDIA ConnectX-6 Dx (firmware 22.43.2566, inbox mlx5 and rdm
   [hardware test page](https://qsfp28-rocelet.ethernetfmc.com/en/latest/hardware_test.html)).
 * **40G / 10G:** ZCU106 + 2x QSFP28 FMC, omac_40g (40GBASE-CR4, FEC off) or omac_10g
   (10GBASE-R), rocelet v0.3.0; the FPGA memory is the design's 256 KB URAM window unless stated.
+* **100G MRMAC:** VCK190 + 2x QSFP28 FMC on FMCP1, the Versal MRMAC with RS-FEC behind the
+  design's `mac_mrmac100g` adapter, the engine at 300 MHz on its own clock, rocelet v0.3.0,
+  bare-metal Cortex-A72 console; host WRITE into the design's self-test pattern region (every
+  write checked), host READ of the 256 KB URAM window, the PS DDR window a 1 MB buffer over one
+  512-bit NoC port per direction.
 
-| Operation | PMTU | 100G (KCU116) | 40G (ZCU106) | 10G (ZCU106) |
-|---|---|---:|---:|---:|
-| FPGA to host, WRITE with immediate | 4096 | 98.01 | 38.83 | 9.80 |
-| FPGA to host, WRITE with immediate | 1024 | 92.56 (v0.1) | | |
-| Host to FPGA, WRITE | 4096 | 96.79 | 38.74 | 9.69-9.71 |
-| Host to FPGA, SEND | 4096 | 96.68 (16 KB, with immediate, v0.1) | 39.20 (8 KB) | 9.80 (8 KB) |
-| Host READ of FPGA memory | 4096 | 96.59 | 38.73-39.17 | 9.44-9.57 |
-| Host READ of FPGA memory | 2048 | 95.10 (v0.1) | | |
-| Host READ of FPGA memory | 1024 | 81.15 (v0.1) | 37.03 | |
-| Host READ of FPGA memory | 512 | | 34.43 | |
-| Host WRITE into the PS DDR window (ZCU106 design, 256 MB) | 4096 | | 38.75 | 9.69-9.80 |
-| Host READ of the PS DDR window | 4096 / 1024 | | 38.74 / 37.02 | 9.13 |
-| Holoscan Sensor Bridge UC stream (1 MiB frames) into GPU memory, frames checked | 4096 | 80 (clean up to the test host's NIC-to-GPU limit of about 81) | 39.0 | 9.77 |
+| Operation | PMTU | 100G (KCU116, CMAC) | 100G (VCK190, MRMAC) | 40G (ZCU106) | 10G (ZCU106) |
+|---|---|---:|---:|---:|---:|
+| FPGA to host, WRITE with immediate | 4096 | 98.01 | 93.49 | 38.83 | 9.80 |
+| FPGA to host, WRITE with immediate | 1024 | 92.56 (v0.1) | 88.20 | | |
+| Host to FPGA, WRITE | 4096 | 96.79 | 97.48 | 38.74 | 9.69-9.71 |
+| Host to FPGA, WRITE | 1024 | | 90.39 | | |
+| Host to FPGA, SEND | 4096 | 96.68 (16 KB, with immediate, v0.1) | 91.75 (8 KB) | 39.20 (8 KB) | 9.80 (8 KB) |
+| Host READ of FPGA memory | 4096 | 96.59 | 96.33 | 38.73-39.17 | 9.44-9.57 |
+| Host READ of FPGA memory | 2048 | 95.10 (v0.1) | | | |
+| Host READ of FPGA memory | 1024 | 81.15 (v0.1) | 80.97 | 37.03 | |
+| Host READ of FPGA memory | 512 | | | 34.43 | |
+| Host WRITE into the PS DDR window (ZCU106: 256 MB; VCK190: 1 MB buffer) | 4096 | | 79.37 (with PAUSE TX) | 38.75 | 9.69-9.80 |
+| Host READ of the PS DDR window | 4096 / 1024 | | 79.20 / - | 38.74 / 37.02 | 9.13 |
+| Holoscan Sensor Bridge UC stream (1 MiB frames) into GPU memory, frames checked | 4096 | 80 (clean up to the test host's NIC-to-GPU limit of about 81) | | 39.0 | 9.77 |
 
 * **Line rate at 40G and 10G**: every 40G figure at PMTU 4096 is within the frame overhead of
   the 40 Gb/s line (Ethernet, IP, UDP, BTH and ICRC headers, preamble and gap); the READ figures
@@ -51,10 +59,18 @@ stated, against an NVIDIA ConnectX-6 Dx (firmware 22.43.2566, inbox mlx5 and rdm
   memory slower than the link without loss (a single HP port of the ZCU106's PS DDR: 32.0 Gb/s
   lossless, against 26.3 Gb/s with go-back-N losses without PAUSE); PAUSE receive held the
   FPGA's WRITE with immediate stream (38.78 to 23.89 Gb/s under 802.3x frames from the host,
-  0 lost). At 100G: 24 M PAUSE frames sent, all honoured by the ConnectX-6.
+  0 lost). At 100G: 24 M PAUSE frames sent, all honoured by the ConnectX-6 (CMAC); behind the
+  VCK190's MRMAC, PAUSE transmit held a host WRITE into the PS DDR window at 79.37 Gb/s
+  lossless, against 47.46 Gb/s with go-back-N losses without PAUSE (92,400 PAUSE frames, every
+  one counted by the ConnectX-6 Dx).
 * **Memory behind `m_axi`**: the engine reaches line rate only if the memory keeps up. The
   ZCU106 design spreads its PS DDR window over two HP ports per direction for that; one 128-bit
-  HP port at 250 MHz capped it at about 32 Gb/s.
+  HP port at 250 MHz capped it at about 32 Gb/s. On the VCK190 one 512-bit NoC port per
+  direction at 300 MHz carries about 79 Gb/s each way into the DDR4 that Linux shares.
+* **100G behind the MRMAC**: host WRITE and READ at PMTU 4096 are at line rate with the engine at
+  300 MHz on its own clock (a 60 s host WRITE ran at 96.62 Gb/s, 723.8 GB, 0 uncorrectable
+  RS-FEC codewords). During the FPGA's WRITE with immediate runs (93.49) the host counted
+  receive-queue exhaustion (`out_of_buffer`: RNR NAK and retry).
 * Host-side limits seen while measuring, not the FPGA's: checking every byte on the CPU
   (`rocelet_host --verify full`) is CPU-bound at about 13 Gb/s on the test host (use
   `--verify sample:N` above that), and a simple single-threaded Holoscan Sensor Bridge receiver

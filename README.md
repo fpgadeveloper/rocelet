@@ -50,7 +50,7 @@ How to read the diagram, the receive and transmit paths, the requester and the r
 
 rocelet is meant to be pulled into a design as a git submodule. The reference design is
 [qsfp28-fmc-rocelet](https://github.com/fpgadeveloper/qsfp28-fmc-rocelet) (Opsero 2x QSFP28
-FMC: 100G on the KCU116, 40G or 10G on the ZCU106; see [docs/designs.md](docs/designs.md)). The `dev` branch holds the work in
+FMC: 100G on the KCU116, 40G or 10G on the ZCU106, 100G on the VCK190; see [docs/designs.md](docs/designs.md)). The `dev` branch holds the work in
 progress; `main` holds releases.
 
 A design instantiates `rocelet_top` (or `rocelet_bd` in an IP integrator block design) between
@@ -117,6 +117,8 @@ against an NVIDIA ConnectX-6 Dx at three link speeds:
 - **40G** (ZCU106 + 2x QSFP28 FMC, omac_40g, v0.3.0): 38.7-39.2 Gb/s WRITE, SEND and READ (READ at
   line rate down to PMTU 512), 802.3x PAUSE in both directions.
 - **10G** (ZCU106, omac_10g, v0.3.0): 9.4-9.8 Gb/s.
+- **100G** (VCK190 + 2x QSFP28 FMC, Versal MRMAC with RS-FEC, v0.3.0, the engine on its own
+  300 MHz clock): 93.5 Gb/s FPGA WRITE with immediate, 97.5 Gb/s host WRITE, 96.3 Gb/s host READ.
 
 The HSB mode carries a Holoscan Sensor Bridge device data plane into GPU memory with NVIDIA's
 HSB 3.0.0 host software (80 Gb/s at 100G, 39.0 Gb/s at 40G). Every figure:
