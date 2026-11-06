@@ -1,7 +1,7 @@
 # rocelet
 
 **rocelet** is an open-source, lightweight **RoCE v2** (RDMA over Converged Ethernet) engine
-for FPGAs, written in vendor-neutral SystemVerilog, validated on AMD UltraScale+ (see
+for FPGAs, written in vendor-neutral SystemVerilog, validated on AMD UltraScale+ and Versal (see
 [Portability](integration.md#10-portability)) and released under the MIT license. It moves data at
 line rate between an FPGA and a host or GPU over a point-to-point 100 GbE link (since v0.3 also
 40 GbE or 10 GbE with a narrower MAC, such as the open-source

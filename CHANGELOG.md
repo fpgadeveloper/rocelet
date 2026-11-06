@@ -17,9 +17,13 @@ Documentation only: no port, parameter or logic change; `VERSION` still reads 0.
   qsfp28-fmc-rocelet `mac_mrmac100g` adapter.
 - designs.md: the qsfp28-fmc-rocelet `vck190_fmcp1` target (VCK190, Versal MRMAC 100G with
   RS-FEC, `MAC_WIDTH` 512, `CLK_KHZ` 300000, `LINK_GBPS` 100), validated on hardware.
-- throughput.md: the 100G MRMAC column (VCK190 against a ConnectX-6 Dx: FPGA WRITE with
-  immediate 93.49, host WRITE 97.48, SEND 91.75, host READ 96.33 Gb/s at PMTU 4096; PS DDR
-  window 79.37 / 79.20 Gb/s with PAUSE TX).
+- throughput.md: the 100G MRMAC column (VCK190 against a ConnectX-6 Dx with RS-FEC, bare-metal
+  console: FPGA WRITE with immediate 93.49, host WRITE 97.48, SEND 91.75, host READ 96.33 Gb/s at
+  PMTU 4096, PS DDR window 79.37 / 79.20 Gb/s with PAUSE TX; the design's Linux image: host
+  WRITE 97.93, host READ 96.54, PS DDR window 97.85 / 88.94 Gb/s, HSB stream into GPU memory
+  76.1 Gb/s, PAUSE receive from the host honoured).
+- index.md, README, roce-subset.md: validated on AMD UltraScale+ and Versal; the VCK190 (100G,
+  MRMAC, engine on its own 300 MHz clock) in the validation list.
 
 ## v0.3.0 (2026-11-05)
 

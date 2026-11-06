@@ -77,7 +77,9 @@ checksum is covered by the Ethernet FCS, not by the ICRC), with CE-marked packet
 rocelet is validated against an NVIDIA ConnectX-6 Dx (mlx5) in all three roles: at 100G on a
 KCU116 with the AMD CMAC (v0.2.2, including READ re-issue after response loss, where the
 continuation answer is required, and link loss; v0.3.0 at 512 bits passes the same simulation
-regression and builds the KCU116 target), and at 40G and 10G on a ZCU106 with the open-source
-omac MACs (v0.3.0, including 802.3x PAUSE in both directions at 40G).
+regression and builds the KCU116 target), at 40G and 10G on a ZCU106 with the open-source
+omac MACs (v0.3.0, including 802.3x PAUSE in both directions at 40G), and at 100G with RS-FEC on
+a VCK190 with the Versal MRMAC behind asynchronous FIFOs, the engine on its own 300 MHz clock
+(v0.3.0, including 802.3x PAUSE in both directions).
 The host-side facts are in [host-setup.md](host-setup.md). UC (and so the HSB mode) is accepted only by NVIDIA (and rxe,
 MANA); Broadcom bnxt_re and the other RDMA drivers reject UC QPs.

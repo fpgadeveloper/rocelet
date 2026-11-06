@@ -1,7 +1,7 @@
 # rocelet
 
 **rocelet** is an open-source, lightweight **RoCE v2** (RDMA over Converged Ethernet) engine
-for FPGAs, written in vendor-neutral SystemVerilog and validated on AMD UltraScale+ (see
+for FPGAs, written in vendor-neutral SystemVerilog and validated on AMD UltraScale+ and Versal (see
 [Portability](docs/integration.md#10-portability)). It is built for the common FPGA use case: moving data
 at line rate between an FPGA and a host or GPU over a point-to-point 100 GbE link (or, since
 v0.3, a 40 GbE or 10 GbE link with a narrower MAC), using standard RDMA NICs (validated with an
@@ -118,10 +118,12 @@ against an NVIDIA ConnectX-6 Dx at three link speeds:
   line rate down to PMTU 512), 802.3x PAUSE in both directions.
 - **10G** (ZCU106, omac_10g, v0.3.0): 9.4-9.8 Gb/s.
 - **100G** (VCK190 + 2x QSFP28 FMC, Versal MRMAC with RS-FEC, v0.3.0, the engine on its own
-  300 MHz clock): 93.5 Gb/s FPGA WRITE with immediate, 97.5 Gb/s host WRITE, 96.3 Gb/s host READ.
+  300 MHz clock behind asynchronous FIFOs): 97.9 Gb/s host WRITE, 96.5 Gb/s host READ, 93.5 Gb/s
+  FPGA WRITE with immediate, 802.3x PAUSE in both directions.
 
 The HSB mode carries a Holoscan Sensor Bridge device data plane into GPU memory with NVIDIA's
-HSB 3.0.0 host software (80 Gb/s at 100G, 39.0 Gb/s at 40G). Every figure:
+HSB 3.0.0 host software (80 Gb/s at 100G on the KCU116, 76.1 Gb/s on the VCK190, 39.0 Gb/s at
+40G). Every figure:
 [docs/throughput.md](docs/throughput.md).
 
 ## Origin

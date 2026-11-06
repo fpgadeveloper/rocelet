@@ -28,24 +28,25 @@ stated, against an NVIDIA ConnectX-6 Dx (firmware 22.43.2566, inbox mlx5 and rdm
   (10GBASE-R), rocelet v0.3.0; the FPGA memory is the design's 256 KB URAM window unless stated.
 * **100G MRMAC:** VCK190 + 2x QSFP28 FMC on FMCP1, the Versal MRMAC with RS-FEC behind the
   design's `mac_mrmac100g` adapter, the engine at 300 MHz on its own clock, rocelet v0.3.0,
-  bare-metal Cortex-A72 console; host WRITE into the design's self-test pattern region (every
-  write checked), host READ of the 256 KB URAM window, the PS DDR window a 1 MB buffer over one
-  512-bit NoC port per direction.
+  bare-metal Cortex-A72 console (figures in parentheses: the design's Linux image); host WRITE
+  into the design's self-test pattern region (every write checked), host READ of the 256 KB URAM
+  window, the PS DDR window over one 512-bit NoC port per direction (bare metal: a 1 MB buffer;
+  Linux: a 256 MB reserved region).
 
 | Operation | PMTU | 100G (KCU116, CMAC) | 100G (VCK190, MRMAC) | 40G (ZCU106) | 10G (ZCU106) |
 |---|---|---:|---:|---:|---:|
 | FPGA to host, WRITE with immediate | 4096 | 98.01 | 93.49 | 38.83 | 9.80 |
 | FPGA to host, WRITE with immediate | 1024 | 92.56 (v0.1) | 88.20 | | |
-| Host to FPGA, WRITE | 4096 | 96.79 | 97.48 | 38.74 | 9.69-9.71 |
+| Host to FPGA, WRITE | 4096 | 96.79 | 97.48 (97.93) | 38.74 | 9.69-9.71 |
 | Host to FPGA, WRITE | 1024 | | 90.39 | | |
 | Host to FPGA, SEND | 4096 | 96.68 (16 KB, with immediate, v0.1) | 91.75 (8 KB) | 39.20 (8 KB) | 9.80 (8 KB) |
-| Host READ of FPGA memory | 4096 | 96.59 | 96.33 | 38.73-39.17 | 9.44-9.57 |
+| Host READ of FPGA memory | 4096 | 96.59 | 96.33 (96.54) | 38.73-39.17 | 9.44-9.57 |
 | Host READ of FPGA memory | 2048 | 95.10 (v0.1) | | | |
 | Host READ of FPGA memory | 1024 | 81.15 (v0.1) | 80.97 | 37.03 | |
 | Host READ of FPGA memory | 512 | | | 34.43 | |
-| Host WRITE into the PS DDR window (ZCU106: 256 MB; VCK190: 1 MB buffer) | 4096 | | 79.37 (with PAUSE TX) | 38.75 | 9.69-9.80 |
-| Host READ of the PS DDR window | 4096 / 1024 | | 79.20 / - | 38.74 / 37.02 | 9.13 |
-| Holoscan Sensor Bridge UC stream (1 MiB frames) into GPU memory, frames checked | 4096 | 80 (clean up to the test host's NIC-to-GPU limit of about 81) | | 39.0 | 9.77 |
+| Host WRITE into the PS DDR window (ZCU106: 256 MB; VCK190: see above) | 4096 | | 79.37 with PAUSE TX (97.85) | 38.75 | 9.69-9.80 |
+| Host READ of the PS DDR window | 4096 / 1024 | | 79.20 (88.94) / - | 38.74 / 37.02 | 9.13 |
+| Holoscan Sensor Bridge UC stream (1 MiB frames) into GPU memory, frames checked | 4096 | 80 (clean up to the test host's NIC-to-GPU limit of about 81) | (76.1 IQ16 at 80 requested; 77.6 at 95 requested with PAUSE receive) | 39.0 | 9.77 |
 
 * **Line rate at 40G and 10G**: every 40G figure at PMTU 4096 is within the frame overhead of
   the 40 Gb/s line (Ethernet, IP, UDP, BTH and ICRC headers, preamble and gap); the READ figures
@@ -62,11 +63,15 @@ stated, against an NVIDIA ConnectX-6 Dx (firmware 22.43.2566, inbox mlx5 and rdm
   0 lost). At 100G: 24 M PAUSE frames sent, all honoured by the ConnectX-6 (CMAC); behind the
   VCK190's MRMAC, PAUSE transmit held a host WRITE into the PS DDR window at 79.37 Gb/s
   lossless, against 47.46 Gb/s with go-back-N losses without PAUSE (92,400 PAUSE frames, every
-  one counted by the ConnectX-6 Dx).
+  one counted by the ConnectX-6 Dx), and PAUSE receive (quanta from the MRMAC) held a Holoscan
+  Sensor Bridge stream requested at 95 Gb/s, above the test host's NIC-to-GPU limit, at
+  77.6 Gb/s without loss (55,650 PAUSE frames from the ConnectX-6 Dx honoured).
 * **Memory behind `m_axi`**: the engine reaches line rate only if the memory keeps up. The
   ZCU106 design spreads its PS DDR window over two HP ports per direction for that; one 128-bit
   HP port at 250 MHz capped it at about 32 Gb/s. On the VCK190 one 512-bit NoC port per
-  direction at 300 MHz carries about 79 Gb/s each way into the DDR4 that Linux shares.
+  direction at 300 MHz carried about 79 Gb/s each way into a 1 MB buffer of the bare-metal
+  console and 97.85 (WRITE) / 88.94 (READ) Gb/s into the Linux image's 256 MB region, in the
+  DDR4 that Linux shares.
 * **100G behind the MRMAC**: host WRITE and READ at PMTU 4096 are at line rate with the engine at
   300 MHz on its own clock (a 60 s host WRITE ran at 96.62 Gb/s, 723.8 GB, 0 uncorrectable
   RS-FEC codewords). During the FPGA's WRITE with immediate runs (93.49) the host counted
